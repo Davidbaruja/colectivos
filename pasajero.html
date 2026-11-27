@@ -316,7 +316,7 @@
       '<br><small>' + esc(e ? e.nombre : '') + ' · ' + esc(c.ruta) + '</small><br>' + estado + '</div>' +
       '<button class="campana" data-aviso="' + esc(id) + '" title="Avisarme cuando salga">' +
       (avisos[id] ? '🔔' : '🔕') + '</button>' +
-      (conAviso ? selectorAviso(id) : '') + '</div>';
+      (conAviso && avisos[id] ? selectorAviso(id) : '') + '</div>';
   }
 
   function selectorAviso(id) {
@@ -504,7 +504,7 @@
     guardar('minAvisos', minAvisos);
     const c = colectivos[id] || {};
     mostrarToast('N° ' + c.numero + ': te avisamos ' + sel.options[sel.selectedIndex].text + ' antes de salir' +
-      (avisos[id] ? '' : ' (activá la campanita 🔔 para recibir el aviso)'));
+      '');
     sel.blur();
     revisarSalidas();
     render();
@@ -532,11 +532,13 @@
     const c = colectivos[id] || {};
     if (avisos[id]) {
       delete avisos[id];
+      delete minAvisos[id];
+      guardar('minAvisos', minAvisos);
       mostrarToast('Avisos desactivados para el N° ' + c.numero);
     } else {
       avisos[id] = true;
       pedirPermiso();
-      mostrarToast('Te avisamos ' + minDe(id) + ' min antes de que salga el N° ' + c.numero + ' y cuando inicie su recorrido');
+      mostrarToast('Avisos activados para el N° ' + c.numero + '. Elegí cuánto antes querés que te avisemos.');
     }
     guardar('avisos', avisos);
     render();
