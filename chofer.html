@@ -14,12 +14,18 @@
   input, button { font-size: 18px; padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; }
   button { background: #1a73e8; color: #fff; border: 0; border-radius: 8px; }
   button.rojo { background: #d93025; }
+  button.gris { background: #5f6368; }
+  button:disabled { opacity: .45; }
+  .fila { display: flex; gap: 8px; }
+  .fila button { flex: 1; width: auto; font-size: 16px; }
   #tarjeta { background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 10px 0; }
   #tarjeta p { margin: 4px 0; }
+  #estadoHorario { background: #e8f0fe; border-radius: 10px; padding: 10px; margin: 8px 0; line-height: 1.5; font-size: 15px; }
+  #estadoHorario.ok { background: #e6f4ea; }
   #mapa { height: 40vh; margin-top: 10px; }
   .oculto { display: none; }
   #error { color: #d93025; }
-    input[type=time] { -webkit-appearance: none; display: block; min-height: 44px; }
+  input[type=time] { -webkit-appearance: none; display: block; min-height: 44px; }
 </style>
 </head>
 <body>
@@ -34,8 +40,15 @@
 
 <div id="panel" class="oculto">
   <div id="tarjeta"></div>
-  <label for="hora">Hora de salida</label>
+
+  <label for="hora">Hora de salida de hoy</label>
   <input id="hora" type="time">
+  <div class="fila">
+    <button id="btnActualizar">Actualizar horario</button>
+    <button id="btnQuitar" class="gris">Quitar horario</button>
+  </div>
+  <div id="estadoHorario"></div>
+
   <button id="btn">Iniciar recorrido</button>
   <p id="info"></p>
   <div id="mapa"></div>
@@ -66,7 +79,12 @@
     maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(mapa);
 
-    let busId = null, datosBus = null, watchId = null, marcador = null, ultima = null, rumbo = null;
+  let busId = null, datosBus = null, watchId = null, marcador = null, ultima = null, rumbo = null;
+  let salidaRef = null;      // escucha del horario de hoy publicado
+  let publicada = null;      // horario de hoy que ven los pasajeros: { hora, fecha } o null
+  let primeraCarga = true;
+  let guardando = false;
+  let wakeLock = null;
 
   // ----- Inicio de sesión -----
   $('btnLogin').onclick = function () {
@@ -74,7 +92,7 @@
     const c = $('clave').value;
     $('error').textContent = '';
     if (!u || !c) { $('error').textContent = 'Completá usuario y contraseña'; return; }
-            auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function (e) {
+    auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function (e) {
       if (e.code === 'auth/network-request-failed') {
         $('error').textContent = 'Sin conexión a internet. Revisá tu señal e intentá de nuevo';
       } else if (e.code === 'auth/too-many-requests') {
@@ -83,7 +101,6 @@
         $('error').textContent = 'Usuario o contraseña incorrectos';
       }
     });
-
   };
 
   auth.onAuthStateChanged(function (user) {
@@ -113,11 +130,15 @@
       '<p>Guarda: ' + esc(datosBus.guarda) + '</p>' +
       '<p>Ruta: ' + esc(datosBus.ruta) + '</p>';
     mapa.invalidateSize();
+    escucharHorario();
   }
 
   function mostrarLogin() {
     detener(false);
+    if (salidaRef) { salidaRef.off(); salidaRef = null; }
+    publicada = null; primeraCarga = true;
     busId = null; datosBus = null;
+    $('hora').value = '';
     $('panel').classList.add('oculto');
     $('login').classList.remove('oculto');
     $('clave').value = '';
@@ -127,33 +148,138 @@
     detener(true).finally(function () { auth.signOut(); });
   };
 
+  // ----- Horario de salida de hoy -----
+  function fechaHoy() {
+    const n = new Date();
+    return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
+  }
+
+  // Escucha en vivo el horario que están viendo los pasajeros
+  function escucharHorario() {
+    if (salidaRef) { salidaRef.off(); }
+    primeraCarga = true;
+    salidaRef = db.ref('salidasHoy/' + busId);
+    salidaRef.on('value', function (s) {
+      const v = s.val();
+      publicada = (v && v.fecha === fechaHoy()) ? v : null;
+      // Al entrar, si ya había publicado la hora de hoy, la muestra en el selector
+      if (primeraCarga && publicada && !$('hora').value) { $('hora').value = publicada.hora; }
+      primeraCarga = false;
+      pintarEstado();
+    }, function () {
+      $('estadoHorario').className = '';
+      $('estadoHorario').textContent = 'No se pudo consultar el horario publicado';
+    });
+    pintarEstado();
+  }
+
+  function pintarEstado() {
+    const el = $('estadoHorario');
+    const h = $('hora').value;
+    const pendiente = (h && (!publicada || publicada.hora !== h) && watchId === null)
+      ? '<br>⚠️ Elegiste las ' + esc(h) + ' hs. Tocá <b>Actualizar horario</b> para que los pasajeros lo vean.' : '';
+    if (publicada) {
+      el.className = 'ok';
+      el.innerHTML = '✅ Los pasajeros ven que hoy salís a las <b>' + esc(publicada.hora) + ' hs</b>.' + pendiente;
+    } else {
+      el.className = '';
+      el.innerHTML = 'Sin cambio de horario: los pasajeros ven el horario normal.' + pendiente;
+    }
+  }
+
+  function actualizarControles() {
+    const enRecorrido = watchId !== null;
+    $('hora').disabled = enRecorrido;
+    $('btnActualizar').disabled = enRecorrido || guardando;
+    $('btnQuitar').disabled = enRecorrido || guardando;
+  }
+
+  $('hora').addEventListener('input', pintarEstado);
+  $('hora').addEventListener('change', pintarEstado);
+
+  $('btnActualizar').onclick = function () {
+    const h = $('hora').value;
+    if (!h) { $('info').textContent = 'Elegí primero la hora de salida'; return; }
+    guardando = true; actualizarControles();
+    db.ref('salidasHoy/' + busId).set({ hora: h, fecha: fechaHoy() }).then(function () {
+      $('info').textContent = '✅ Horario actualizado: los pasajeros ya ven las ' + h + ' hs';
+    }).catch(function () {
+      $('info').textContent = '❌ No se pudo actualizar el horario. Revisá tu conexión e intentá de nuevo';
+    }).finally(function () { guardando = false; actualizarControles(); });
+  };
+
+  $('btnQuitar').onclick = function () {
+    if (!publicada) {
+      $('hora').value = '';
+      pintarEstado();
+      $('info').textContent = 'No hay ningún horario cambiado. Los pasajeros ya ven el horario normal';
+      return;
+    }
+    guardando = true; actualizarControles();
+    db.ref('salidasHoy/' + busId).remove().then(function () {
+      $('hora').value = '';
+      pintarEstado();
+      $('info').textContent = '✅ Horario quitado: los pasajeros ven el horario normal';
+    }).catch(function () {
+      $('info').textContent = '❌ No se pudo quitar el horario. Revisá tu conexión e intentá de nuevo';
+    }).finally(function () { guardando = false; actualizarControles(); });
+  };
+
+  // ----- Mantener la pantalla encendida durante el recorrido -----
+  function mantenerPantalla() {
+    if (!('wakeLock' in navigator) || (wakeLock && !wakeLock.released)) return;
+    navigator.wakeLock.request('screen').then(function (w) { wakeLock = w; }).catch(function () {});
+  }
+  function soltarPantalla() {
+    if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; }
+  }
+  // El navegador la suelta si cambiás de app; al volver, se pide de nuevo
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && watchId !== null) { mantenerPantalla(); }
+  });
+
   // ----- Recorrido -----
   $('btn').onclick = function () {
     if (watchId === null) {
-      if (!$('hora').value) { $('info').textContent = 'Elegí la hora de salida primero'; return; }
+      const h = $('hora').value;
+      if (!h) { $('info').textContent = 'Elegí la hora de salida primero'; return; }
+      // La hora con la que sale también queda publicada para los pasajeros
+      db.ref('salidasHoy/' + busId).set({ hora: h, fecha: fechaHoy() }).catch(function () {});
       $('info').textContent = 'Buscando ubicación...';
       watchId = navigator.geolocation.watchPosition(mostrar, error, { enableHighAccuracy: true });
       this.textContent = 'Terminar recorrido';
       this.classList.add('rojo');
-      $('hora').disabled = true;
+      mantenerPantalla();
+      actualizarControles();
     } else {
       detener(true);
     }
   };
 
   function detener(borrar) {
+    const estabaEnRecorrido = watchId !== null;
     if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-        ultima = null; rumbo = null;
+    ultima = null; rumbo = null;
+    soltarPantalla();
     if (marcador) { mapa.removeLayer(marcador); marcador = null; }
     $('btn').textContent = 'Iniciar recorrido';
     $('btn').classList.remove('rojo');
-    $('hora').disabled = false;
     $('info').textContent = '';
-    if (borrar && busId) { return db.ref('buses/' + busId).remove(); }
+    actualizarControles();
+    if (borrar && busId) {
+      const tareas = [db.ref('buses/' + busId).remove()];
+      // Al terminar el recorrido, la hora de hoy se borra y vuelve el horario normal
+      if (estabaEnRecorrido) {
+        $('hora').value = '';
+        tareas.push(db.ref('salidasHoy/' + busId).remove().catch(function () {}));
+      }
+      return Promise.all(tareas);
+    }
+    pintarEstado();
     return Promise.resolve();
   }
 
-    function calcRumbo(a, b) {
+  function calcRumbo(a, b) {
     const r = Math.PI / 180;
     const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
     const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) -
@@ -199,6 +325,8 @@
   }
 
   function error(e) { $('info').textContent = 'Error: ' + e.message; }
+
+  actualizarControles();
 </script>
 </body>
 </html>

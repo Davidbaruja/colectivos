@@ -98,7 +98,7 @@
   }).addTo(mapa);
 
   // ----- Datos -----
-  let empresas = {}, rutas = {}, colectivos = {}, buses = {};
+  let empresas = {}, rutas = {}, colectivos = {}, buses = {}, salidasHoy = {};
   const marcadores = {};
   const geometrias = {};
   let seleccionado = null, capaRuta = null;
@@ -162,8 +162,40 @@
     return suya.i <= mia.i;
   }
 
-  function proximaSalida(c) {
-    const lista = Object.values(c.salidas || {}).slice().sort();
+  function fechaHoy() {
+    const n = new Date();
+    return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
+  }
+  function aMin(hm) { const p = String(hm).split(':'); return Number(p[0]) * 60 + Number(p[1]); }
+
+  // Horarios de salida de hoy: los fijos, pero si el chofer eligió otra hora,
+  // esa reemplaza al horario fijo más cercano
+  function salidasDe(id) {
+    const c = colectivos[id] || {};
+    const lista = Object.values(c.salidas || {}).slice();
+    const o = salidasHoy[id];
+    if (o && o.hora && o.fecha === fechaHoy()) {
+      if (!lista.length) { lista.push(o.hora); }
+      else {
+        let k = 0, mejor = Infinity;
+        lista.forEach(function (x, i) {
+          const d = Math.abs(aMin(x) - aMin(o.hora));
+          if (d < mejor) { mejor = d; k = i; }
+        });
+        lista[k] = o.hora;
+      }
+    }
+    return lista.sort();
+  }
+
+  // ¿El chofer cambió el horario de hoy?
+  function horarioCambiado(id) {
+    const o = salidasHoy[id];
+    return !!(o && o.hora && o.fecha === fechaHoy());
+  }
+
+  function proximaSalida(id) {
+    const lista = salidasDe(id);
     if (!lista.length) return '';
     const n = new Date();
     const hm = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
@@ -384,7 +416,8 @@
         if (eta) { estado += '<br><b>' + eta + '</b>'; }
       }
     } else {
-      estado = '<span class="etq gris">Sale ' + esc(proximaSalida(c) || 'sin horario') + '</span>';
+      estado = '<span class="etq gris">Sale ' + esc(proximaSalida(id) || 'sin horario') + '</span>' +
+        (horarioCambiado(id) ? ' <small>🕒 horario cambiado hoy</small>' : '');
     }
     return '<div class="bus-fila' + (id === seleccionado ? ' sel' : '') + '" data-id="' + esc(id) + '">' +
       '<div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> ' +
@@ -447,7 +480,8 @@
       h += '<small id="senal"></small>';
     } else {
       h += '<span class="etq gris">No está en recorrido</span><br>' +
-        'Salidas: ' + esc(Object.values(c.salidas || {}).join(', ') || '-') + ' hs';
+        'Salidas: ' + esc(salidasDe(id).join(', ') || '-') + ' hs' +
+        (horarioCambiado(id) ? '<br><small>🕒 El chofer cambió el horario de hoy</small>' : '');
     }
     box.innerHTML = h;
     box.classList.remove('oculto');
@@ -653,7 +687,7 @@
     Object.keys(colectivos).forEach(function (id) {
       if (!suscrito(id) || estaActivo(id)) return;
       const c = colectivos[id];
-      Object.values(c.salidas || {}).forEach(function (s) {
+      salidasDe(id).forEach(function (s) {
         const p = String(s).split(':');
         const salida = new Date(n.getFullYear(), n.getMonth(), n.getDate(), Number(p[0]), Number(p[1]));
         const faltan = Math.round((salida - n) / 60000);
@@ -693,6 +727,23 @@
   db.ref('colectivos').on('value', function (s) {
     colectivos = s.val() || {};
     actualizarMarcadores();
+    revisarSalidas();
+    render();
+  });
+  let primeraSalidas = true;
+  db.ref('salidasHoy').on('value', function (s) {
+    const nuevo = s.val() || {};
+    // Aviso de cambio de horario: solo a quien activó la campanita de ese colectivo
+    if (!primeraSalidas) {
+      Object.keys(nuevo).forEach(function (id) {
+        const a = salidasHoy[id], b = nuevo[id];
+        if (b && b.fecha === fechaHoy() && suscrito(id) && !estaActivo(id) && (!a || a.hora !== b.hora)) {
+          notificar('🕒 Cambió el horario', infoBus(id) + '\nHoy sale a las ' + b.hora + ' hs', id);
+        }
+      });
+    }
+    primeraSalidas = false;
+    salidasHoy = nuevo;
     revisarSalidas();
     render();
   });
