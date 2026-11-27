@@ -12,6 +12,18 @@
   body { font-family: sans-serif; margin: 10px; }
   #mapa { height: 50vh; margin-top: 10px; }
   .bus { background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 8px 0; }
+  .bus-icono { position: relative; width: 44px; height: 44px; }
+  .bus-icono span {
+    position: absolute; inset: 4px; display: flex; align-items: center; justify-content: center;
+    background: #fff; border: 3px solid #1a73e8; border-radius: 50%; font-size: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  }
+  .flecha { position: absolute; inset: 0; display: none; }
+  .flecha::before {
+    content: ''; position: absolute; top: -10px; left: 50%; margin-left: -8px;
+    border-left: 8px solid transparent; border-right: 8px solid transparent;
+    border-bottom: 13px solid #1a73e8;
+  }
 </style>
 </head>
 <body>
@@ -78,7 +90,21 @@
       marcadores[id].openPopup();
     }
   };
+  function iconoBus() {
+    return L.divIcon({
+      className: '',
+      html: '<div class="bus-icono"><div class="flecha"></div><span>🚌</span></div>',
+      iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -22]
+    });
+  }
 
+  function girar(m, r) {
+    const el = m.getElement();
+    if (!el) return;
+    const f = el.querySelector('.flecha');
+    if (r == null) { f.style.display = 'none'; }
+    else { f.style.display = 'block'; f.style.transform = 'rotate(' + r + 'deg)'; }
+  }
   db.ref('buses').on('value', function (snap) {
     buses = snap.val() || {};
     Object.keys(marcadores).forEach(function (id) {
@@ -87,11 +113,12 @@
     const ids = Object.keys(buses);
     ids.forEach(function (id) {
       const b = buses[id];
-      if (!marcadores[id]) {
-        marcadores[id] = L.marker([b.lat, b.lng]).addTo(mapa).bindPopup(detalle(b));
+           if (!marcadores[id]) {
+        marcadores[id] = L.marker([b.lat, b.lng], { icon: iconoBus() }).addTo(mapa).bindPopup(detalle(b));
       } else {
         marcadores[id].setLatLng([b.lat, b.lng]);
       }
+      girar(marcadores[id], b.rumbo);
     });
     if (!centrado && ids.length) {
       mapa.fitBounds(ids.map(function (id) { return [buses[id].lat, buses[id].lng]; }),

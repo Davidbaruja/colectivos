@@ -66,7 +66,7 @@
     maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(mapa);
 
-  let busId = null, datosBus = null, watchId = null, marcador = null;
+    let busId = null, datosBus = null, watchId = null, marcador = null, ultima = null, rumbo = null;
 
   // ----- Inicio de sesión -----
   $('btnLogin').onclick = function () {
@@ -143,6 +143,7 @@
 
   function detener(borrar) {
     if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+        ultima = null; rumbo = null;
     if (marcador) { mapa.removeLayer(marcador); marcador = null; }
     $('btn').textContent = 'Iniciar recorrido';
     $('btn').classList.remove('rojo');
@@ -152,12 +153,35 @@
     return Promise.resolve();
   }
 
+    function calcRumbo(a, b) {
+    const r = Math.PI / 180;
+    const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+    const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) -
+              Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+    return (Math.atan2(y, x) / r + 360) % 360;
+  }
+
   function mostrar(pos) {
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
+    const actual = { lat: lat, lng: lng };
+
+    // Dirección: primero la del celular; si no hay, la calculamos con el punto anterior
+    const h = pos.coords.heading;
+    if (h != null && !isNaN(h) && pos.coords.speed > 1) {
+      rumbo = h;
+      ultima = actual;
+    } else if (!ultima) {
+      ultima = actual;
+    } else if (mapa.distance([ultima.lat, ultima.lng], [lat, lng]) > 15) {
+      rumbo = calcRumbo(ultima, actual);
+      ultima = actual;
+    }
+
     $('info').textContent = 'Transmitiendo · Lat: ' + lat.toFixed(5) + ' | Lng: ' + lng.toFixed(5);
     db.ref('buses/' + busId).set({
       lat: lat, lng: lng, hora: Date.now(),
+      rumbo: rumbo,
       salida: $('hora').value,
       numero: datosBus.numero || '',
       chapa: datosBus.chapa || '',
