@@ -51,6 +51,11 @@
   .num-bus { background: #1a73e8; color: #fff; border: 2px solid #fff; border-radius: 14px; font-weight: bold; font-size: 14px;
              text-align: center; line-height: 24px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
   .num-bus.sel { background: #e8710a; }
+  .salida { background: #f1f3f4; border-radius: 10px; padding: 8px; margin: 8px 0; }
+  .salida label { margin-top: 6px; }
+  .dias { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .dias label { display: flex; align-items: center; gap: 4px; margin: 0; padding: 8px 10px; background: #fff; border-radius: 8px; font-size: 15px; color: #202124; }
+  .dias input { width: auto; margin: 0; }
   .oculto { display: none !important; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
            padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 92%; font-size: 15px; }
@@ -327,7 +332,36 @@
   function usuarioDe(busId) {
     return Object.keys(asignaciones).filter(function (u) { return asignaciones[u] === busId; })[0] || '';
   }
-  function salidasLista(c) { return Object.values((c && c.salidas) || {}).slice().sort(); }
+  const DIAS_CORTO = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const DIAS_LARGO = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const ORDEN_DIAS = [1, 2, 3, 4, 5, 6, 0];
+  const TERMINALES = ['Asunción', 'Ybycuí'];
+  function vacia() { return { hora: '', terminal: '', tipo: 'todos', dias: [], fecha: '' }; }
+  // Cada salida: { hora, terminal, tipo: 'todos' | 'dias' | 'fecha', dias: [0-6], fecha: 'AAAA-MM-DD' }
+  // Las salidas viejas (solo texto "05:20") se leen como "todos los días, sin terminal"
+  function salidasLista(c) {
+    return Object.values((c && c.salidas) || {}).map(function (s) {
+      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '' }; }
+      return {
+        hora: s.hora || '', terminal: s.terminal || '', tipo: s.tipo || 'todos',
+        dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || ''
+      };
+    }).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
+  }
+  function fechaCorta(f) { const p = String(f).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : f; }
+  function cuandoSale(s) {
+    if (s.tipo === 'fecha') return 'solo el ' + fechaCorta(s.fecha);
+    if (s.tipo === 'dias') {
+      const d = ORDEN_DIAS.filter(function (x) { return s.dias.indexOf(x) >= 0; }).map(function (x) { return DIAS_LARGO[x]; });
+      if (d.length === 7) return 'todos los días';
+      if (d.length === 1) return 'todos los ' + d[0];
+      return d.slice(0, -1).join(', ') + ' y ' + d[d.length - 1];
+    }
+    return 'todos los días';
+  }
+  function textoSalidaAdmin(s) {
+    return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : '') + ' · ' + cuandoSale(s);
+  }
   function fechaHoy() {
     const n = new Date();
     return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
@@ -366,7 +400,10 @@
         html += '<div class="tarjeta"><div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> · ' + esc(c.chapa) +
           '<br><small>' + esc(c.ruta) + '</small>' +
           '<br><small>Conductor: ' + esc(c.chofer || '-') + ' · Guarda: ' + esc(c.guarda || '-') + '</small>' +
-          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + ' · Salidas: ' + esc(salidasLista(c).join(', ') || '-') + (c.horarioFijo ? ' · 📌 Horario fijo' : '') + '</small>' +
+          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + (c.horarioFijo ? ' · 📌 Horario fijo' : '') + '</small>' +
+          (salidasLista(c).length
+            ? '<br><small>' + salidasLista(c).map(function (s) { return '🕒 ' + esc(textoSalidaAdmin(s)); }).join('<br>') + '</small>'
+            : '<br><small>Sin horarios de salida</small>') +
           cambio + '</div>' +
           '<button class="chico" data-editar="' + esc(id) + '">Editar</button></div>';
       });
@@ -552,15 +589,49 @@
   $('fEmp').addEventListener('change', function () { llenarRutas($('fRuta').value); });
 
   function pintarSalidas() {
-    $('fSalidas').innerHTML = salidasForm.map(function (h, i) {
-      return '<div class="fila"><input type="time" value="' + esc(h) + '" data-i="' + i + '">' +
-        '<button type="button" class="rojo chico" data-quitar="' + i + '">✕</button></div>';
+    $('fSalidas').innerHTML = salidasForm.map(function (s, i) {
+      const op = function (v, t, sel) { return '<option value="' + v + '"' + (sel === v ? ' selected' : '') + '>' + t + '</option>'; };
+      let extra = '';
+      if (s.tipo === 'dias') {
+        extra = '<div class="dias">' + ORDEN_DIAS.map(function (d) {
+          return '<label><input type="checkbox" data-dia="' + d + '"' + (s.dias.indexOf(d) >= 0 ? ' checked' : '') + '> ' + DIAS_CORTO[d] + '</label>';
+        }).join('') + '</div>';
+      } else if (s.tipo === 'fecha') {
+        extra = '<label>Fecha</label><input type="date" data-campo="fecha" value="' + esc(s.fecha) + '">';
+      }
+      return '<div class="salida" data-s="' + i + '">' +
+        '<div class="fila"><input type="time" data-campo="hora" value="' + esc(s.hora) + '">' +
+        '<button type="button" class="rojo chico" data-quitar="' + i + '">✕</button></div>' +
+        '<label>Terminal de salida</label>' +
+        '<select data-campo="terminal">' + op('', 'Elegí la terminal', s.terminal) +
+          TERMINALES.map(function (t) { return op(t, t, s.terminal); }).join('') + '</select>' +
+        '<label>Cuándo sale</label>' +
+        '<select data-campo="tipo">' + op('todos', 'Todos los días', s.tipo) +
+          op('dias', 'Días fijos de la semana (ej. todos los lunes)', s.tipo) +
+          op('fecha', 'Solo una fecha', s.tipo) + '</select>' +
+        extra + '</div>';
     }).join('') || '<p class="vacio">Sin horarios cargados.</p>';
   }
-  $('btnAddSalida').onclick = function () { salidasForm.push(''); pintarSalidas(); };
-  $('fSalidas').addEventListener('input', function (e) {
-    if (e.target.dataset.i != null) { salidasForm[Number(e.target.dataset.i)] = e.target.value; }
-  });
+  $('btnAddSalida').onclick = function () { salidasForm.push(vacia()); pintarSalidas(); };
+
+  function cambioSalida(e) {
+    const t = e.target, caja = t.closest('[data-s]');
+    if (!caja) return;
+    const s = salidasForm[Number(caja.dataset.s)];
+    if (!s) return;
+    const campo = t.dataset.campo;
+    if (campo === 'hora' || campo === 'fecha' || campo === 'terminal') { s[campo] = t.value; }
+    if (e.type === 'change') {
+      if (campo === 'tipo') { s.tipo = t.value; pintarSalidas(); }
+      if (t.dataset.dia != null) {
+        const d = Number(t.dataset.dia), k = s.dias.indexOf(d);
+        if (t.checked && k < 0) { s.dias.push(d); }
+        if (!t.checked && k >= 0) { s.dias.splice(k, 1); }
+      }
+    }
+  }
+  $('fSalidas').addEventListener('input', cambioSalida);
+  $('fSalidas').addEventListener('change', cambioSalida);
   $('fSalidas').addEventListener('click', function (e) {
     const q = e.target.closest('[data-quitar]');
     if (q) { salidasForm.splice(Number(q.dataset.quitar), 1); pintarSalidas(); }
@@ -605,9 +676,22 @@
       aviso('Ese usuario ya está asignado a otro colectivo'); return;
     }
 
-    const horas = [];
-    salidasForm.forEach(function (h) { if (h && horas.indexOf(h) < 0) horas.push(h); });
-    horas.sort();
+    const horas = [], vistos = {};
+    for (let i = 0; i < salidasForm.length; i++) {
+      const s = salidasForm[i];
+      if (!s.hora) continue;   // fila sin hora: se ignora
+      if (TERMINALES.indexOf(s.terminal) < 0) { aviso('Elegí la terminal de salida del horario de las ' + s.hora); return; }
+      if (s.tipo === 'dias' && !s.dias.length) { aviso('Marcá al menos un día de la semana para las ' + s.hora); return; }
+      if (s.tipo === 'fecha' && !s.fecha) { aviso('Elegí la fecha del horario de las ' + s.hora); return; }
+      const item = { hora: s.hora, terminal: s.terminal, tipo: s.tipo };
+      if (s.tipo === 'dias') { item.dias = s.dias.slice().sort(function (x, y) { return x - y; }); }
+      if (s.tipo === 'fecha') { item.fecha = s.fecha; }
+      const k = [item.hora, item.terminal, item.tipo, (item.dias || []).join(','), item.fecha || ''].join('|');
+      if (vistos[k]) continue;
+      vistos[k] = true;
+      horas.push(item);
+    }
+    horas.sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
 
     const id = editId || nuevoId(numero, emp);
     const viejo = editId ? usuarioDe(editId) : '';

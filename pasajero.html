@@ -254,30 +254,62 @@
       (avance === null ? '' : '<div class="barra"><i style="width:' + avance + '%"></i></div>');
   }
 
-  function fechaHoy() {
-    const n = new Date();
-    return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
+  function fechaDe(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
+  function fechaHoy() { return fechaDe(new Date()); }
   function aMin(hm) { const p = String(hm).split(':'); return Number(p[0]) * 60 + Number(p[1]); }
 
-  // Horarios de salida de hoy: los fijos, pero si el chofer eligió otra hora,
-  // esa reemplaza al horario fijo más cercano
+  const DIAS_LARGO = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const ORDEN_DIAS = [1, 2, 3, 4, 5, 6, 0];
+
+  // Cada salida: { hora, terminal, tipo: 'todos' | 'dias' | 'fecha', dias: [0-6], fecha }
+  // Las salidas viejas (solo texto "05:20") se leen como "todos los días, sin terminal"
+  function normSalidas(c) {
+    return Object.values((c && c.salidas) || {}).map(function (s) {
+      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '' }; }
+      return {
+        hora: s.hora || '', terminal: s.terminal || '', tipo: s.tipo || 'todos',
+        dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || ''
+      };
+    }).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
+  }
+  function aplicaEn(s, d) {
+    if (s.tipo === 'fecha') return s.fecha === fechaDe(d);
+    if (s.tipo === 'dias') return s.dias.indexOf(d.getDay()) >= 0;
+    return true;
+  }
+  function fechaCorta(f) { const q = String(f).split('-'); return q.length === 3 ? q[2] + '/' + q[1] + '/' + q[0] : f; }
+  function cuandoSale(s) {
+    if (s.tipo === 'fecha') return 'solo el ' + fechaCorta(s.fecha);
+    if (s.tipo === 'dias') {
+      const d = ORDEN_DIAS.filter(function (x) { return s.dias.indexOf(x) >= 0; }).map(function (x) { return DIAS_LARGO[x]; });
+      if (d.length === 7) return 'todos los días';
+      if (d.length === 1) return 'todos los ' + d[0];
+      return d.slice(0, -1).join(', ') + ' y ' + d[d.length - 1];
+    }
+    return 'todos los días';
+  }
+  function etiquetaSalida(s) { return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : ''); }
+
+  // Salidas que corresponden a hoy; si el chofer eligió otra hora,
+  // esa reemplaza a la salida de hoy más cercana
   function salidasDe(id) {
     const c = colectivos[id] || {};
-    const lista = Object.values(c.salidas || {}).slice();
+    const lista = normSalidas(c).filter(function (s) { return aplicaEn(s, new Date()); });
     const o = salidasHoy[id];
     if (o && o.hora && o.fecha === fechaHoy()) {
-      if (!lista.length) { lista.push(o.hora); }
+      if (!lista.length) { lista.push({ hora: o.hora, terminal: '', tipo: 'fecha', dias: [], fecha: o.fecha }); }
       else {
         let k = 0, mejor = Infinity;
         lista.forEach(function (x, i) {
-          const d = Math.abs(aMin(x) - aMin(o.hora));
+          const d = Math.abs(aMin(x.hora) - aMin(o.hora));
           if (d < mejor) { mejor = d; k = i; }
         });
-        lista[k] = o.hora;
+        lista[k] = Object.assign({}, lista[k], { hora: o.hora });
       }
     }
-    return lista.sort();
+    return lista.sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
   }
 
   // ¿El chofer cambió el horario de hoy?
@@ -287,12 +319,28 @@
   }
 
   function proximaSalida(id) {
-    const lista = salidasDe(id);
-    if (!lista.length) return '';
     const n = new Date();
     const hm = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
-    const prox = lista.filter(function (s) { return s >= hm; })[0];
-    return prox ? prox + ' hs' : lista[0] + ' hs (mañana)';
+    const hoy = salidasDe(id).filter(function (s) { return s.hora >= hm; })[0];
+    if (hoy) return etiquetaSalida(hoy);
+    const todas = normSalidas(colectivos[id] || {});
+    for (let i = 1; i <= 14; i++) {
+      const d = new Date(n.getFullYear(), n.getMonth(), n.getDate() + i);
+      const l = todas.filter(function (s) { return aplicaEn(s, d); });
+      if (l.length) {
+        return etiquetaSalida(l[0]) + ' (' + (i === 1 ? 'mañana' : DIAS_LARGO[d.getDay()] + ' ' + d.getDate() + '/' + (d.getMonth() + 1)) + ')';
+      }
+    }
+    return '';
+  }
+
+  // Todos los horarios cargados, con sus días
+  function horariosCompletos(c) {
+    const l = normSalidas(c);
+    if (!l.length) return '';
+    return '<small>' + l.map(function (s) {
+      return '🕒 ' + esc(etiquetaSalida(s)) + ' · ' + esc(cuandoSale(s));
+    }).join('<br>') + '</small><br>';
   }
 
   // ----- Hora estimada de llegada -----
@@ -620,7 +668,9 @@
       h += '<small id="senal"></small>';
     } else {
       h += '<span class="etq gris">No está en recorrido</span><br>' +
-        'Salidas: ' + esc(salidasDe(id).join(', ') || '-') + ' hs' +
+        'Próxima salida: ' + esc(proximaSalida(id) || 'sin horario') + '<br>' +
+        'Hoy: ' + esc(salidasDe(id).map(etiquetaSalida).join(', ') || 'no hay salidas') + '<br>' +
+        horariosCompletos(c) +
         (horarioCambiado(id) ? '<br><small>🕒 El chofer cambió el horario de hoy</small>'
           : (c.horarioFijo ? '<br><small>📌 Horario fijo</small>' : ''));
     }
@@ -860,14 +910,14 @@
       if (!suscrito(id) || estaActivo(id)) return;
       const c = colectivos[id];
       salidasDe(id).forEach(function (s) {
-        const p = String(s).split(':');
+        const p = String(s.hora).split(':');
         const salida = new Date(n.getFullYear(), n.getMonth(), n.getDate(), Number(p[0]), Number(p[1]));
         const faltan = Math.round((salida - n) / 60000);
-        const clave = hoy + '|' + id + '|' + s;
+        const clave = hoy + '|' + id + '|' + s.hora + '|' + s.terminal;
         if (faltan >= 0 && faltan <= minDe(id) && !enviados[clave]) {
           enviados[clave] = true;
           notificar('⏰ Está por salir',
-            infoBus(id) + '\nSale a las ' + s + ' hs (en ' + faltan + ' min)', id);
+            infoBus(id) + '\nSale a las ' + s.hora + ' hs' + (s.terminal ? ' desde ' + s.terminal : '') + ' (en ' + faltan + ' min)', id);
         }
       });
     });
