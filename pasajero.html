@@ -267,11 +267,11 @@
   // Las salidas viejas (solo texto "05:20") se leen como "todos los días, sin terminal"
   function normSalidas(c) {
     return Object.values((c && c.salidas) || {}).map(function (s) {
-      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [] }; }
+      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [], fijo: false }; }
       return {
         hora: s.hora || '', terminal: s.terminal || '', tipo: s.tipo || 'todos',
         dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || '',
-        excepto: Object.values(s.excepto || {})
+        excepto: Object.values(s.excepto || {}), fijo: s.fijo === true
       };
     }).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
   }
@@ -296,7 +296,7 @@
     }
     return 'todos los días';
   }
-  function etiquetaSalida(s) { return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : ''); }
+  function etiquetaSalida(s) { return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : '') + (s.fijo ? ' 📌 fijo' : ''); }
 
   // Salidas que corresponden a hoy; si el chofer eligió otra hora,
   // esa reemplaza a la salida de hoy más cercana

@@ -70,6 +70,11 @@
   .cal-grid button.dia.hoy { border-color: #e8710a; }
   .cal-grid button.dia.sel { background: #1a73e8; color: #fff; }
   .cal-grid button.dia.sel small { color: #fff; }
+  .fila select { flex: 1; width: auto; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .modal .caja { background: #fff; border-radius: 14px; padding: 16px; width: 100%; max-width: 420px; }
+  .modal .caja h3 { margin: 0 0 6px; color: #202124; font-size: 18px; }
+  .modal .caja p { margin: 0 0 8px; line-height: 1.4; }
   .oculto { display: none !important; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
            padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 92%; font-size: 15px; }
@@ -209,6 +214,16 @@
     <button id="btnGuardar">Guardar</button>
     <button id="btnCancelar" class="sec">Cancelar</button>
     <button id="btnEliminar" class="rojo oculto">Eliminar colectivo</button>
+  </div>
+</div>
+
+<div id="modalFijo" class="modal oculto">
+  <div class="caja">
+    <h3>📌 ¿Es un horario fijo?</h3>
+    <p id="mTexto"></p>
+    <button id="mSi" type="button">📌 Sí, horario fijo</button>
+    <button id="mNo" type="button" class="sec">No, horario normal</button>
+    <button id="mVolver" type="button" class="sec">Volver</button>
   </div>
 </div>
 
@@ -360,16 +375,16 @@
   const DIAS_LARGO = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
   const ORDEN_DIAS = [1, 2, 3, 4, 5, 6, 0];
   const TERMINALES = ['Asunción', 'Ybycuí'];
-  function vacia() { return { hora: '', terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [] }; }
+  function vacia() { return { hora: '', terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [], fijo: false }; }
   // Cada salida: { hora, terminal, tipo: 'todos' | 'dias' | 'fecha', dias: [0-6], fecha: 'AAAA-MM-DD' }
   // Las salidas viejas (solo texto "05:20") se leen como "todos los días, sin terminal"
   function salidasLista(c) {
     return Object.values((c && c.salidas) || {}).map(function (s) {
-      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [] }; }
+      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [], fijo: false }; }
       return {
         hora: s.hora || '', terminal: s.terminal || '', tipo: s.tipo || 'todos',
         dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || '',
-        excepto: Object.values(s.excepto || {})
+        excepto: Object.values(s.excepto || {}), fijo: s.fijo === true
       };
     }).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
   }
@@ -394,10 +409,11 @@
     if (s.tipo === 'dias') { item.dias = s.dias.slice().sort(function (x, y) { return x - y; }); }
     if (s.tipo === 'fecha') { item.fecha = s.fecha; }
     if (s.tipo !== 'fecha' && s.excepto && s.excepto.length) { item.excepto = s.excepto.slice().sort(); }
+    if (s.fijo) { item.fijo = true; }
     return item;
   }
   function textoSalidaAdmin(s) {
-    return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : '') + ' · ' + cuandoSale(s);
+    return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : '') + ' · ' + cuandoSale(s) + (s.fijo ? ' · 📌 Horario fijo' : '');
   }
   function fechaHoy() {
     const n = new Date();
@@ -647,7 +663,9 @@
         '<select data-campo="tipo">' + op('todos', 'Todos los días', s.tipo) +
           op('dias', 'Días fijos de la semana (ej. todos los lunes)', s.tipo) +
           op('fecha', 'Solo una fecha', s.tipo) + '</select>' +
-        extra + '</div>';
+        extra +
+        '<label style="display:flex;align-items:center;gap:8px;color:#202124;"><input type="checkbox" data-campo="fijo"' + (s.fijo ? ' checked' : '') + ' style="width:auto;margin:0;"> 📌 Horario fijo</label>' +
+        '</div>';
     }).join('') || '<p class="vacio">Sin horarios cargados.</p>';
   }
   $('btnAddSalida').onclick = function () { salidasForm.push(vacia()); pintarSalidas(); };
@@ -660,6 +678,7 @@
     const campo = t.dataset.campo;
     if (campo === 'hora' || campo === 'fecha' || campo === 'terminal') { s[campo] = t.value; }
     if (e.type === 'change') {
+      if (campo === 'fijo') { s.fijo = t.checked; }
       if (campo === 'tipo') { s.tipo = t.value; pintarSalidas(); }
       if (t.dataset.dia != null) {
         const d = Number(t.dataset.dia), k = s.dias.indexOf(d);
@@ -827,8 +846,8 @@
       (items.map(function (x) {
         const c = colectivos[x.id];
         const a = ' data-id="' + esc(x.id) + '" data-i="' + x.i + '"';
-        return '<div class="tarjeta"><div class="txt"><b>' + esc(x.s.hora) + ' hs</b> · 🚌 N° ' + esc(c.numero) +
-          '<br><small>' + esc(x.s.terminal ? 'Desde ' + x.s.terminal : 'Sin terminal') + ' · ' + esc(cuandoSale(x.s)) + '</small></div>' +
+        return '<div class="tarjeta"><div class="txt"><b>' + esc(x.s.hora) + ' hs</b>' + (x.s.fijo ? ' 📌' : '') + ' · 🚌 N° ' + esc(c.numero) +
+          '<br><small>' + esc(x.s.terminal ? 'Desde ' + x.s.terminal : 'Sin terminal') + ' · ' + esc(cuandoSale(x.s)) + (x.s.fijo ? ' · 📌 Horario fijo' : '') + '</small></div>' +
           '<div class="acciones"><button type="button" class="chico" data-acc="cambiar"' + a + '>Cambiar</button>' +
           '<button type="button" class="chico sec" data-acc="quitar"' + a + '>Quitar este día</button>' +
           (x.s.tipo !== 'fecha' ? '<button type="button" class="chico rojo" data-acc="borrar"' + a + '>Eliminar siempre</button>' : '') +
@@ -888,12 +907,24 @@
 
   function cerrarEditorCal() { calEd = null; $('calEditor').innerHTML = ''; }
 
+  // Selector de hora: una lista para la hora y otra para los minutos
+  function selHora(v) {
+    const p = String(v || '').split(':');
+    const dos = function (n) { return String(n).padStart(2, '0'); };
+    let h = '<div class="fila"><select id="cH"><option value="">Hora</option>';
+    for (let i = 0; i < 24; i++) { h += '<option value="' + dos(i) + '"' + (p[0] === dos(i) ? ' selected' : '') + '>' + dos(i) + '</option>'; }
+    h += '</select><b>:</b><select id="cM"><option value="">Min</option>';
+    for (let i = 0; i < 60; i++) { h += '<option value="' + dos(i) + '"' + (p[1] === dos(i) ? ' selected' : '') + '>' + dos(i) + '</option>'; }
+    return h + '</select></div>';
+  }
+
   function abrirEditorCal(modo, id, i) {
-    calEd = { modo: modo, id: id, i: i };
+    calEd = { modo: modo, id: id, i: i, pend: null, fijoActual: false };
     let s = vacia(), titulo = 'Agregar horario el ' + fechaCorta(calDia);
     if (modo === 'cambiar') {
       s = salidasLista(colectivos[id])[i];
       if (!s) return;
+      calEd.fijoActual = !!s.fijo;
       titulo = 'Cambiar la salida de las ' + s.hora + ' del N° ' + colectivos[id].numero;
     }
     const op = function (v, t, sel) { return '<option value="' + esc(v) + '"' + (sel === v ? ' selected' : '') + '>' + esc(t) + '</option>'; };
@@ -904,9 +935,14 @@
             const c = colectivos[b];
             return op(b, 'N° ' + c.numero + ' · ' + (c.chapa || '') + (esGeneral && empresas[c.empresa] ? ' · ' + empresas[c.empresa].nombre : ''), '');
           }).join('') + '</select>' : '') +
-      '<label>Hora de salida</label><input id="cHora" type="time" value="' + esc(s.hora) + '">' +
+      '<label>Hora de salida</label>' + selHora(s.hora) +
       '<label>Terminal de salida</label><select id="cTerm">' + op('', 'Elegí la terminal', s.terminal) +
         TERMINALES.map(function (t) { return op(t, t, s.terminal); }).join('') + '</select>' +
+      (modo === 'nuevo'
+        ? '<label>¿Cuándo sale?</label><select id="cRepite">' +
+          op('fecha', 'Solo el ' + fechaCorta(calDia), 'fecha') +
+          op('dias', 'Todos los ' + DIAS_LARGO[dowDe(calDia)], 'fecha') +
+          op('todos', 'Todos los días', 'fecha') + '</select>' : '') +
       ((modo === 'cambiar' && s.tipo !== 'fecha')
         ? '<label>Aplicar el cambio</label><select id="cAlcance">' +
           op('dia', 'Solo el ' + fechaCorta(calDia), 'dia') +
@@ -916,30 +952,55 @@
     $('calEditor').scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  // Paso 1: revisa los datos y pregunta si el horario es fijo
   $('calEditor').addEventListener('click', function (e) {
     if (e.target.id === 'calCancelar') { cerrarEditorCal(); return; }
     if (e.target.id !== 'calGuardar' || !calEd) return;
     const id = calEd.modo === 'nuevo' ? $('cBus').value : calEd.id;
-    const hora = $('cHora').value, term = $('cTerm').value;
+    const hh = $('cH').value, mm = $('cM').value, term = $('cTerm').value;
     if (!id || !colectivos[id]) { aviso('Elegí el colectivo'); return; }
-    if (!hora) { aviso('Elegí la hora de salida'); return; }
+    if (!hh || !mm) { aviso('Elegí la hora y los minutos de salida'); return; }
     if (TERMINALES.indexOf(term) < 0) { aviso('Elegí la terminal de salida'); return; }
+    const hora = hh + ':' + mm;
+    calEd.pend = {
+      id: id, hora: hora, term: term,
+      alcance: $('cAlcance') ? $('cAlcance').value : 'todas',
+      repite: $('cRepite') ? $('cRepite').value : 'fecha'
+    };
+    $('mTexto').textContent = 'Salida de las ' + hora + ' hs del N° ' + colectivos[id].numero + '. ' +
+      '¿Querés que aparezca como horario fijo para los pasajeros?';
+    $('mSi').textContent = '📌 Sí, horario fijo';
+    $('mNo').textContent = 'No, horario normal';
+    $('modalFijo').classList.remove('oculto');
+  });
+
+  $('mVolver').onclick = function () { $('modalFijo').classList.add('oculto'); };
+  $('mSi').onclick = function () { confirmarEditorCal(true); };
+  $('mNo').onclick = function () { confirmarEditorCal(false); };
+
+  // Paso 2: guarda con la respuesta elegida
+  function confirmarEditorCal(fijo) {
+    $('modalFijo').classList.add('oculto');
+    if (!calEd || !calEd.pend) return;
+    const p = calEd.pend, id = p.id;
+    if (!colectivos[id]) { aviso('Ese colectivo ya no existe'); cerrarEditorCal(); return; }
     const lista = salidasLista(colectivos[id]);
-    const nueva = { hora: hora, terminal: term, tipo: 'fecha', dias: [], fecha: calDia, excepto: [] };
+    const nueva = { hora: p.hora, terminal: p.term, tipo: 'fecha', dias: [], fecha: calDia, excepto: [], fijo: fijo };
     if (calEd.modo === 'nuevo') {
+      if (p.repite === 'dias') { nueva.tipo = 'dias'; nueva.dias = [dowDe(calDia)]; nueva.fecha = ''; }
+      if (p.repite === 'todos') { nueva.tipo = 'todos'; nueva.fecha = ''; }
       lista.push(nueva);
     } else {
       const s = lista[calEd.i];
       if (!s) { aviso('Ese horario ya no existe'); cerrarEditorCal(); return; }
-      const alcance = $('cAlcance') ? $('cAlcance').value : 'todas';
-      if (s.tipo === 'fecha' || alcance === 'todas') { s.hora = hora; s.terminal = term; }
+      if (s.tipo === 'fecha' || p.alcance === 'todas') { s.hora = p.hora; s.terminal = p.term; s.fijo = fijo; }
       else { s.excepto.push(calDia); lista.push(nueva); }   // solo ese día: se saca de la serie y se crea uno suelto
     }
     $('calGuardar').disabled = true;
-    guardarSalidas(id, lista, '✅ Horario guardado').then(function (ok) {
+    guardarSalidas(id, lista, fijo ? '✅ Horario guardado como fijo 📌' : '✅ Horario guardado').then(function (ok) {
       if (ok) { cerrarEditorCal(); } else if ($('calGuardar')) { $('calGuardar').disabled = false; }
     });
-  });
+  }
 
   // ----- Rutas -----
   let rutaId = null, paradasForm = [], volverACol = false;
