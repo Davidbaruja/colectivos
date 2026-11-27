@@ -73,8 +73,8 @@
     const c = $('clave').value;
     $('error').textContent = '';
     if (!u || !c) { $('error').textContent = 'Completá usuario y contraseña'; return; }
-    auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function () {
-      $('error').textContent = 'Usuario o contraseña incorrectos';
+        auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function (e) {
+      $('error').textContent = 'Error: ' + e.code;
     });
   };
 
