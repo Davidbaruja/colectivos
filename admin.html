@@ -278,7 +278,7 @@
 
   function mostrarLogin() {
     dejarDeEscuchar();
-    buses = {}; busSel = null; encuadrado = false;
+    buses = {}; busSel = null; encuadrado = false; borrarRuta();
     Object.keys(marcas).forEach(function (id) { marcas[id].remove(); delete marcas[id]; });
     empresas = {}; rutas = {}; colectivos = {}; asignaciones = {}; salidasHoy = {}; encargados = {};
     esGeneral = false; miEmpresa = null; editId = null; admEmp = null;
@@ -848,6 +848,64 @@
     encuadrado = true;
   }
 
+  // ----- Ruta del colectivo seleccionado: gris = ya recorrido, naranja = lo que falta -----
+  const geometrias = {};
+  let capaRuta = null;
+
+  // Trazado por las calles; si el servicio falla, une las paradas con líneas rectas
+  function obtenerTrazado(ps) {
+    const clave = ps.map(function (p) { return p.lng + ',' + p.lat; }).join(';');
+    if (!geometrias[clave]) {
+      const recta = ps.map(function (p) { return [p.lat, p.lng]; });
+      geometrias[clave] = fetch('https://router.project-osrm.org/route/v1/driving/' + clave + '?overview=full&geometries=geojson')
+        .then(function (res) { return res.json(); })
+        .then(function (j) { return j.routes[0].geometry.coordinates.map(function (c) { return [c[1], c[0]]; }); })
+        .catch(function () { delete geometrias[clave]; return recta; });
+    }
+    return { clave: clave, promesa: geometrias[clave] };
+  }
+
+  function borrarRuta() {
+    if (capaRuta) { if (capaRuta.grupo) { capaRuta.grupo.remove(); } capaRuta = null; }
+  }
+
+  function dibujarRuta() {
+    const ps = busSel ? paradasDe(colectivos[busSel].rutaId) : [];
+    if (ps.length < 2) { borrarRuta(); return; }
+    const t = obtenerTrazado(ps);
+    const clave = busSel + '|' + t.clave;
+    if (capaRuta && capaRuta.clave === clave) { partirRuta(); return; }
+    borrarRuta();
+    const capaNueva = capaRuta = { clave: clave };
+    t.promesa.then(function (g) {
+      if (capaRuta !== capaNueva) return; // cambió la selección mientras cargaba
+      const grupo = L.layerGroup().addTo(mapaVivo);
+      capaNueva.grupo = grupo;
+      capaNueva.geo = g;
+      capaNueva.hecha = L.polyline([], { color: '#9aa0a6', weight: 5, opacity: 0.9 }).addTo(grupo);
+      capaNueva.falta = L.polyline([], { color: '#e8710a', weight: 6 }).addTo(grupo);
+      ps.forEach(function (p) {
+        L.circleMarker([p.lat, p.lng], { radius: 6, color: '#e8710a', weight: 3, fillColor: '#fff', fillOpacity: 1 })
+          .bindTooltip(esc(p.nombre)).addTo(grupo);
+      });
+      partirRuta();
+      mapaVivo.fitBounds(g, { padding: [30, 30] });
+    });
+  }
+
+  function partirRuta() {
+    const b = buses[busSel];
+    if (!b || !capaRuta || !capaRuta.geo) return;
+    const g = capaRuta.geo;
+    let k = 0, mejor = Infinity;
+    g.forEach(function (p, i) {
+      const d = Math.pow(p[0] - b.lat, 2) + Math.pow(p[1] - b.lng, 2);
+      if (d < mejor) { mejor = d; k = i; }
+    });
+    capaRuta.hecha.setLatLngs(g.slice(0, k + 1).concat([[b.lat, b.lng]]));
+    capaRuta.falta.setLatLngs([[b.lat, b.lng]].concat(g.slice(k + 1)));
+  }
+
   function pintarMapa(centrar) {
     if ($('vistaMapa').classList.contains('oculto') || !mapaVivo) return;
     const ids = enRecorrido();
@@ -882,9 +940,11 @@
         'Ruta: ' + esc(c.ruta || '-') + '<br>' +
         'Salida: ' + esc(b.salida || '-') + ' hs<br>' +
         '📍 ' + esc(cercaDe(busSel) || 'En recorrido') + '<br>' +
-        '<small>Última señal hace ' + hace(b.hora) + '</small>';
+        '<small>Última señal hace ' + hace(b.hora) + '</small>' +
+        '<br><small><span style="color:#80868b">▬ Ya recorrió</span> · <span style="color:#e8710a">▬ Le falta</span></small>';
     }
     $('infoBus').classList.toggle('oculto', !busSel);
+    dibujarRuta();
 
     $('listaVivos').innerHTML = ids.map(function (id) {
       return '<div class="tarjeta vivo" data-vivo="' + esc(id) + '"><div class="txt"><b>🚌 N° ' + esc(colectivos[id].numero) + '</b> · ' +
@@ -894,8 +954,8 @@
 
   function elegirBus(id) {
     busSel = id;
+    mapaVivo.setView([buses[id].lat, buses[id].lng], 13);
     pintarMapa(false);
-    mapaVivo.setView([buses[id].lat, buses[id].lng], 14);
     window.scrollTo(0, 0);
   }
 
