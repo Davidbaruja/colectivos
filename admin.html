@@ -41,6 +41,12 @@
   #mapaBuses { height: 55vh; border-radius: 10px; margin: 6px 0; }
   #infoBus { background: #fef7e0; border: 2px solid #e8710a; border-radius: 12px; padding: 12px; margin: 6px 0; line-height: 1.5; }
   .vivo { cursor: pointer; }
+  .tiempos { display: flex; gap: 8px; margin: 8px 0 4px; }
+  .tiempos div { flex: 1; background: #fff; border-radius: 10px; padding: 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .tiempos small { display: block; color: #5f6368; }
+  .tiempos b { font-size: 18px; }
+  .barra { height: 8px; background: #dadce0; border-radius: 4px; overflow: hidden; margin: 4px 0 8px; }
+  .barra i { display: block; height: 100%; background: #e8710a; }
   #cerrarBus { float: right; width: auto; background: #e8710a; padding: 4px 12px; margin: 0 0 4px 8px; }
   .num-bus { background: #1a73e8; color: #fff; border: 2px solid #fff; border-radius: 14px; font-weight: bold; font-size: 14px;
              text-align: center; line-height: 24px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
@@ -270,7 +276,7 @@
     escuchar('rutas', function (s) { rutas = s.val() || {}; pintar(); });
     escuchar('colectivos', function (s) { colectivos = s.val() || {}; pintar(); });
     escuchar('asignaciones', function (s) { asignaciones = s.val() || {}; pintar(); });
-    escuchar('buses', function (s) { buses = s.val() || {}; pintarMapa(false); });
+    escuchar('buses', function (s) { buses = s.val() || {}; registrarPosiciones(); pintarMapa(false); });
     escuchar('salidasHoy', function (s) { salidasHoy = s.val() || {}; pintar(); });
     if (esGeneral) { escuchar('encargados', function (s) { encargados = s.val() || {}; pintar(); }); }
     ver('vistaCol');
@@ -890,6 +896,7 @@
       });
       partirRuta();
       mapaVivo.fitBounds(g, { padding: [30, 30] });
+      pintarMapa(false);
     });
   }
 
@@ -904,6 +911,76 @@
     });
     capaRuta.hecha.setLatLngs(g.slice(0, k + 1).concat([[b.lat, b.lng]]));
     capaRuta.falta.setLatLngs([[b.lat, b.lng]].concat(g.slice(k + 1)));
+  }
+
+  // ----- Cálculo de tiempos -----
+  // 45 -> "45 min" · 75 -> "1 h 15 min"
+  function duracion(min) {
+    const m = Math.max(0, Math.round(min));
+    if (m < 1) return 'menos de 1 min';
+    if (m < 60) return m + ' min';
+    return Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+  }
+  function horaEn(min) {
+    const d = new Date(Date.now() + min * 60000);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  // Minutos desde que inició el recorrido (si falta el dato, desde la hora de salida)
+  function minutosEnViaje(b) {
+    if (b.inicio) return Math.max(0, (Date.now() - b.inicio) / 60000);
+    const p = String(b.salida || '').split(':');
+    if (p.length < 2) return null;
+    const d = new Date();
+    d.setHours(Number(p[0]), Number(p[1]), 0, 0);
+    return d <= new Date() ? (Date.now() - d) / 60000 : null;
+  }
+  // En qué kilómetro de la ruta está un punto, y a qué distancia de ella
+  function enRuta(g, p, distancia) {
+    let total = 0, aqui = 0, lejos = Infinity;
+    g.forEach(function (q, i) {
+      if (i) { total += distancia(g[i - 1], q) / 1000; }
+      const d = distancia(q, [p.lat, p.lng]) / 1000;
+      if (d < lejos) { lejos = d; aqui = total; }
+    });
+    return { km: aqui, lejos: lejos, total: total };
+  }
+  function cajasViaje(b, g, kmh) {
+    const lleva = minutosEnViaje(b);
+    let falta = 'Calculando...', llega = '', avance = null;
+    if (g && g.length > 1) {
+      const r = enRuta(g, b, distanciaM);
+      const resto = r.total - r.km;
+      avance = r.total ? Math.round(r.km / r.total * 100) : 0;
+      if (resto < 0.3) { falta = 'Llegando'; }
+      else {
+        const min = resto / kmh * 60;
+        falta = '~' + duracion(min);
+        llega = 'a las ' + horaEn(min);
+      }
+    }
+    return '<div class="tiempos"><div><small>⏱ Lleva recorrido</small><b>' + (lleva === null ? '-' : duracion(lleva)) + '</b></div>' +
+      '<div><small>🏁 Le falta</small><b>' + falta + '</b><small>' + llega + '</small></div></div>' +
+      (avance === null ? '' : '<div class="barra"><i style="width:' + avance + '%"></i></div>');
+  }
+
+  function distanciaM(a, b) { return mapaVivo.distance(a, b); }
+
+  // Velocidad medida en los últimos 5 minutos; si hay pocos datos, 40 km/h
+  const historia = {};
+  function registrarPosiciones() {
+    Object.keys(historia).forEach(function (id) { if (!buses[id]) delete historia[id]; });
+    Object.keys(buses).forEach(function (id) {
+      const b = buses[id], h = historia[id] = historia[id] || [];
+      if (h.length && h[h.length - 1].t === b.hora) return;
+      h.push({ t: b.hora, lat: b.lat, lng: b.lng });
+      while (b.hora - h[0].t > 5 * 60 * 1000) { h.shift(); }
+    });
+  }
+  function velocidadUsada(id) {
+    const h = historia[id] || [], a = h[0], z = h[h.length - 1];
+    if (!a || z.t - a.t < 60000) return 40;
+    const kmh = distanciaM([a.lat, a.lng], [z.lat, z.lng]) / 1000 / ((z.t - a.t) / 3600000);
+    return Math.min(90, Math.max(15, kmh));
   }
 
   function pintarMapa(centrar) {
@@ -940,6 +1017,7 @@
         'Ruta: ' + esc(c.ruta || '-') + '<br>' +
         'Salida: ' + esc(b.salida || '-') + ' hs<br>' +
         '📍 ' + esc(cercaDe(busSel) || 'En recorrido') + '<br>' +
+        cajasViaje(b, capaRuta && capaRuta.clave.indexOf(busSel + '|') === 0 ? capaRuta.geo : null, velocidadUsada(busSel)) +
         '<small>Última señal hace ' + hace(b.hora) + '</small>' +
         '<br><small><span style="color:#80868b">▬ Ya recorrió</span> · <span style="color:#e8710a">▬ Le falta</span></small>';
     }

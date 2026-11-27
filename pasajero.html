@@ -40,6 +40,14 @@
   .det-cab { display: flex; justify-content: space-between; align-items: center; }
   .cerrar { width: auto; background: #e8710a; padding: 4px 10px; margin: 0; }
   .icono-bus { filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+  .tiempos { display: flex; gap: 8px; margin: 8px 0 4px; }
+  .tiempos div { flex: 1; background: #fff; border-radius: 10px; padding: 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .tiempos small { display: block; color: #5f6368; }
+  .tiempos b { font-size: 18px; }
+  .barra { height: 8px; background: #dadce0; border-radius: 4px; overflow: hidden; margin: 4px 0 8px; }
+  .barra i { display: block; height: 100%; background: #e8710a; }
+  .parada-mia { background: #1a73e8; color: #fff; border-radius: 10px; padding: 10px; text-align: center; margin: 8px 0; }
+  .parada-mia b { display: block; font-size: 24px; }
   .oculto { display: none !important; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
            padding: 12px 16px; border-radius: 10px; z-index: 2000; max-width: 90%; font-size: 15px; }
@@ -151,15 +159,66 @@
     return null;
   }
 
+  function distanciaM(a, b) { return mapa.distance(a, b); }
+
   // ¿El colectivo viene hacia el pasajero o ya pasó su parada?
   function viene(id) {
     const c = colectivos[id], b = buses[id];
     const ref = puntoRef();
     if (!c || !b || !ref) return null;
-    const mia = paradaCercana(c.rutaId, ref);
-    const suya = paradaCercana(c.rutaId, b);
-    if (!mia || !suya) return null;
-    return suya.i <= mia.i;
+    const g = geoListo(c.rutaId);
+    if (!g || g.length < 2) return null;
+    return enRuta(g, b, distanciaM).km <= enRuta(g, ref, distanciaM).km + 0.3;
+  }
+
+  // ----- Cálculo de tiempos -----
+  // 45 -> "45 min" · 75 -> "1 h 15 min"
+  function duracion(min) {
+    const m = Math.max(0, Math.round(min));
+    if (m < 1) return 'menos de 1 min';
+    if (m < 60) return m + ' min';
+    return Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+  }
+  function horaEn(min) {
+    const d = new Date(Date.now() + min * 60000);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  // Minutos desde que inició el recorrido (si falta el dato, desde la hora de salida)
+  function minutosEnViaje(b) {
+    if (b.inicio) return Math.max(0, (Date.now() - b.inicio) / 60000);
+    const p = String(b.salida || '').split(':');
+    if (p.length < 2) return null;
+    const d = new Date();
+    d.setHours(Number(p[0]), Number(p[1]), 0, 0);
+    return d <= new Date() ? (Date.now() - d) / 60000 : null;
+  }
+  // En qué kilómetro de la ruta está un punto, y a qué distancia de ella
+  function enRuta(g, p, distancia) {
+    let total = 0, aqui = 0, lejos = Infinity;
+    g.forEach(function (q, i) {
+      if (i) { total += distancia(g[i - 1], q) / 1000; }
+      const d = distancia(q, [p.lat, p.lng]) / 1000;
+      if (d < lejos) { lejos = d; aqui = total; }
+    });
+    return { km: aqui, lejos: lejos, total: total };
+  }
+  function cajasViaje(b, g, kmh) {
+    const lleva = minutosEnViaje(b);
+    let falta = 'Calculando...', llega = '', avance = null;
+    if (g && g.length > 1) {
+      const r = enRuta(g, b, distanciaM);
+      const resto = r.total - r.km;
+      avance = r.total ? Math.round(r.km / r.total * 100) : 0;
+      if (resto < 0.3) { falta = 'Llegando'; }
+      else {
+        const min = resto / kmh * 60;
+        falta = '~' + duracion(min);
+        llega = 'a las ' + horaEn(min);
+      }
+    }
+    return '<div class="tiempos"><div><small>⏱ Lleva recorrido</small><b>' + (lleva === null ? '-' : duracion(lleva)) + '</b></div>' +
+      '<div><small>🏁 Le falta</small><b>' + falta + '</b><small>' + llega + '</small></div></div>' +
+      (avance === null ? '' : '<div class="barra"><i style="width:' + avance + '%"></i></div>');
   }
 
   function fechaHoy() {
@@ -248,33 +307,44 @@
     return k;
   }
 
+  function velocidadUsada(id) {
+    return Math.min(90, Math.max(15, velocidadKmh(id) || VEL_DEFECTO));
+  }
+
   // Minutos que faltan para que llegue a tu punto (por la ruta, no en línea recta)
   function etaMin(id) {
     const c = colectivos[id], b = buses[id], ref = puntoRef();
-    if (!c || !b || !ref || !estaActivo(id) || viene(id) === false) return null;
-    let dist;
+    if (!c || !b || !ref || !estaActivo(id)) return null;
     const g = geoListo(c.rutaId);
-    if (g && g.length > 1) {
-      const ib = indiceCercano(g, b), ir = indiceCercano(g, ref);
-      if (ir < ib) { return km(b, ref) < 0.3 ? { min: 0, real: true } : null; }
-      dist = 0;
-      for (let i = ib; i < ir; i++) { dist += mapa.distance(g[i], g[i + 1]) / 1000; }
-    } else {
-      dist = km(b, ref) * 1.3; // mientras carga la ruta: estimación en línea recta
-    }
-    const medida = velocidadKmh(id);
-    const v = Math.min(90, Math.max(15, medida || VEL_DEFECTO));
-    return { min: dist / v * 60, real: medida !== null };
+    if (!g || g.length < 2) return null;
+    const bus = enRuta(g, b, distanciaM), yo = enRuta(g, ref, distanciaM);
+    if (yo.lejos > 3) return { lejos: yo.lejos };
+    if (km(b, ref) < 0.3) return { min: 0 };
+    if (yo.km < bus.km) return { paso: true };
+    return { min: (yo.km - bus.km) / velocidadUsada(id) * 60 };
   }
 
   function textoEta(id) {
     const e = etaMin(id);
-    if (!e) return '';
-    if (e.min < 1) return '⏱ Está llegando';
-    let m = Math.round(e.min);
-    if (m >= 10) { m = Math.round(m / 5) * 5; }
-    const t = m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min';
-    return '⏱ Llega en ~' + t + (e.real ? '' : ' (aprox.)');
+    if (!e || e.min === undefined) return '';
+    return e.min < 1 ? '⏱ Está llegando' : '⏱ Llega en ~' + duracion(e.min);
+  }
+
+  // Cuadro destacado: en cuánto llega a donde está esperando el pasajero
+  function cajaMiParada(id) {
+    if (!puntoRef()) {
+      return '<div class="parada-mia">📍 Activá tu ubicación para saber cuándo llega a tu parada' +
+        '<button class="sec" id="btnMiParada">Usar mi ubicación</button></div>';
+    }
+    const e = etaMin(id);
+    let t;
+    if (!e) t = 'Calculando...';
+    else if (e.lejos) t = 'Estás a ' + e.lejos.toFixed(1) + ' km de esta ruta';
+    else if (e.paso) t = 'Ya pasó tu parada';
+    else if (e.min < 1) t = '<b>Está llegando</b>';
+    else t = '<b>~' + duracion(e.min) + '</b>aprox. a las ' + horaEn(e.min);
+    const titulo = (e && e.min >= 1) ? '🚏 Llega a ' + (miPos ? 'tu ubicación' : 'tu parada') + ' en' : '🚏 Tu parada';
+    return '<div class="parada-mia">' + titulo + '<br>' + t + '</div>';
   }
 
   // ----- Ícono del colectivo (el frente apunta hacia donde va) -----
@@ -364,6 +434,7 @@
       });
       actualizarRuta();
       mapa.fitBounds(L.latLngBounds(g), { padding: [30, 30] });
+      render();
     });
   }
 
@@ -388,6 +459,7 @@
     dibujarRuta();
     actualizarMarcadores();
     render();
+    if (!miPos) { pedirUbicacion(false); }
     if (window.innerWidth <= 700) { window.scrollTo({ top: 0, behavior: 'smooth' }); }
   }
 
@@ -467,16 +539,10 @@
       const b = buses[id];
       h += '<span class="etq">En recorrido</span> salió ' + esc(b.salida) + ' hs<br>' +
         '📍 Ahora: ' + esc(dondeEsta(id)) + '<br>';
+      h += cajaMiParada(id);
+      h += cajasViaje(b, geoListo(c.rutaId), velocidadUsada(id));
       const ref = puntoRef();
-      if (ref) {
-        h += 'A ' + km(b, ref).toFixed(1) + ' km de vos';
-        const v = viene(id);
-        if (v === true) h += ' · viene hacia vos';
-        if (v === false) h += ' · ya pasó tu parada';
-        h += '<br>';
-        const eta = textoEta(id);
-        if (eta) { h += '<b>' + eta + '</b><br>'; }
-      }
+      if (ref) { h += 'En línea recta está a ' + km(b, ref).toFixed(1) + ' km de vos<br>'; }
       h += '<small id="senal"></small>';
     } else {
       h += '<span class="etq gris">No está en recorrido</span><br>' +
@@ -571,10 +637,17 @@
   $('btnLimpiar').onclick = limpiar;
   $('hasta').addEventListener('keydown', function (e) { if (e.key === 'Enter') buscar(); });
 
-  $('btnUbic').onclick = function () {
+  // Sigue la ubicación del pasajero; centrar = mover el mapa hasta él
+  let seguimiento = null;
+  function pedirUbicacion(centrar) {
     if (!navigator.geolocation) { mostrarToast('Tu navegador no permite usar la ubicación'); return; }
+    if (seguimiento !== null) {
+      if (centrar && miPos) { mapa.setView([miPos.lat, miPos.lng], 12); }
+      return;
+    }
     $('btnUbic').textContent = 'Buscando tu ubicación...';
-    navigator.geolocation.getCurrentPosition(function (p) {
+    let primera = true;
+    seguimiento = navigator.geolocation.watchPosition(function (p) {
       miPos = { lat: p.coords.latitude, lng: p.coords.longitude };
       if (!miMarcador) {
         miMarcador = L.circleMarker([miPos.lat, miPos.lng], {
@@ -583,20 +656,25 @@
       } else {
         miMarcador.setLatLng([miPos.lat, miPos.lng]);
       }
-      mapa.setView([miPos.lat, miPos.lng], 12);
+      if (primera && centrar) { mapa.setView([miPos.lat, miPos.lng], 12); }
       $('btnUbic').textContent = '📍 Ubicación activada';
-      render();
+      if (primera) { primera = false; render(); }
     }, function () {
+      if (miPos) return;
+      navigator.geolocation.clearWatch(seguimiento);
+      seguimiento = null;
       $('btnUbic').textContent = '📍 Usar mi ubicación';
       mostrarToast('No se pudo obtener tu ubicación');
     }, { enableHighAccuracy: true });
-  };
+  }
+  $('btnUbic').onclick = function () { pedirUbicacion(true); };
 
   // ----- Clics en el panel -----
   $('panel').addEventListener('click', function (e) {
     if (e.target.closest('.aviso-min')) return;
     const bell = e.target.closest('[data-aviso]');
     if (bell) { alternarAviso(bell.dataset.aviso); return; }
+    if (e.target.id === 'btnMiParada') { pedirUbicacion(false); return; }
     if (e.target.id === 'cerrarDetalle') { deseleccionar(); return; }
     const emp = e.target.closest('[data-empresa]');
     if (emp) {

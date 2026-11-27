@@ -79,6 +79,7 @@
     maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(mapa);
 
+  let inicio = null;           // momento en que inició el recorrido
   let busId = null, datosBus = null, watchId = null, marcador = null, ultima = null, rumbo = null;
   let salidaRef = null;      // escucha del horario de hoy publicado
   let publicada = null;      // horario de hoy que ven los pasajeros: { hora, fecha } o null
@@ -245,6 +246,12 @@
       if (!h) { $('info').textContent = 'Elegí la hora de salida primero'; return; }
       // La hora con la que sale también queda publicada para los pasajeros
       db.ref('salidasHoy/' + busId).set({ hora: h, fecha: fechaHoy() }).catch(function () {});
+      // Si la página se recargó en pleno viaje, se conserva la hora de inicio
+      inicio = Date.now();
+      db.ref('buses/' + busId).once('value').then(function (s) {
+        const v = s.val();
+        if (v && v.inicio && v.salida === h && Date.now() - v.hora < 60 * 60 * 1000) { inicio = v.inicio; }
+      }).catch(function () {});
       $('info').textContent = 'Buscando ubicación...';
       watchId = navigator.geolocation.watchPosition(mostrar, error, { enableHighAccuracy: true });
       this.textContent = 'Terminar recorrido';
@@ -308,6 +315,7 @@
     db.ref('buses/' + busId).set({
       lat: lat, lng: lng, hora: Date.now(),
       rumbo: rumbo,
+      inicio: inicio,
       salida: $('hora').value,
       numero: datosBus.numero || '',
       chapa: datosBus.chapa || '',
