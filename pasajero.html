@@ -3,36 +3,73 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pasajero</title>
+<title>Colectivos en vivo</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
-  body { font-family: sans-serif; margin: 10px; }
-  #mapa { height: 50vh; margin-top: 10px; }
-  .bus { background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 8px 0; }
-  .bus-icono { position: relative; width: 44px; height: 44px; }
-  .bus-icono span {
-    position: absolute; inset: 4px; display: flex; align-items: center; justify-content: center;
-    background: #fff; border: 3px solid #1a73e8; border-radius: 50%; font-size: 20px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #202124; background: #fff; }
+  #app { display: flex; height: 100vh; }
+  #panel { width: 370px; overflow-y: auto; padding: 12px; border-right: 1px solid #ddd; }
+  #mapa { flex: 1; }
+  @media (max-width: 700px) {
+    #app { flex-direction: column; height: auto; }
+    #mapa { height: 50vh; flex: none; order: -1; }
+    #panel { width: 100%; border-right: 0; }
   }
-  .flecha { position: absolute; inset: 0; display: none; }
-  .flecha::before {
-    content: ''; position: absolute; top: -10px; left: 50%; margin-left: -8px;
-    border-left: 8px solid transparent; border-right: 8px solid transparent;
-    border-bottom: 13px solid #1a73e8;
-  }
+  h2 { font-size: 19px; margin: 4px 0 10px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; color: #5f6368; }
+  input, button { font-size: 16px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; width: 100%; margin: 3px 0; }
+  button { background: #1a73e8; color: #fff; border: 0; cursor: pointer; }
+  button.sec { background: #f1f3f4; color: #202124; }
+  .fila { display: flex; gap: 6px; }
+  .bus-fila { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 10px; background: #f1f3f4; margin: 6px 0; border: 2px solid transparent; }
+  .bus-fila.sel { border-color: #e8710a; background: #fef7e0; }
+  .bus-fila .txt { flex: 1; cursor: pointer; line-height: 1.4; }
+  .campana { width: auto; background: none; font-size: 22px; padding: 4px; margin: 0; }
+  .empresa { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-radius: 10px; background: #e8f0fe; margin: 6px 0; cursor: pointer; }
+  .empresa span { font-size: 13px; color: #5f6368; }
+  .etq { display: inline-block; font-size: 12px; padding: 2px 7px; border-radius: 6px; background: #188038; color: #fff; }
+  .etq.gris { background: #80868b; }
+  .etq.azul { background: #1a73e8; }
+  #detalle { background: #fef7e0; border: 2px solid #e8710a; border-radius: 12px; padding: 12px; margin-bottom: 10px; line-height: 1.5; }
+  .det-cab { display: flex; justify-content: space-between; align-items: center; }
+  .cerrar { width: auto; background: #e8710a; padding: 4px 10px; margin: 0; }
+  .icono-bus { filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+  .oculto { display: none !important; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
+           padding: 12px 16px; border-radius: 10px; z-index: 2000; max-width: 90%; font-size: 15px; }
 </style>
 </head>
 <body>
-<h3>Colectivos en recorrido</h3>
-<p id="info">Esperando colectivos...</p>
-<div id="mapa"></div>
-<div id="lista"></div>
+<div id="app">
+  <div id="panel">
+    <h2>🚌 Colectivos en vivo</h2>
+    <div id="detalle" class="oculto"></div>
+
+    <input id="desde" list="listaParadas" placeholder="Salgo desde (ej: Asunción)">
+    <input id="hasta" list="listaParadas" placeholder="Voy hasta (ej: Ybycuí)">
+    <datalist id="listaParadas"></datalist>
+    <div class="fila">
+      <button id="btnBuscar">Buscar</button>
+      <button id="btnLimpiar" class="sec">Limpiar</button>
+    </div>
+    <button id="btnUbic" class="sec">📍 Usar mi ubicación</button>
+
+    <h3 id="tituloRes" class="oculto">Resultados</h3>
+    <div id="resultados"></div>
+
+    <h3 id="contador">Cargando...</h3>
+    <div id="empresas"></div>
+  </div>
+  <div id="mapa"></div>
+</div>
+<div id="toast" class="oculto"></div>
 
 <script>
+  // Pegá acá la MISMA apiKey que pusiste en chofer.html
   const firebaseConfig = {
     apiKey: "AIzaSyAgXGe2yG3QDv7reBa0Oet5nGjK7XIQaA0",
     authDomain: "colectivos-7caae.firebaseapp.com",
@@ -49,86 +86,464 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function norm(t) {
+    return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  }
 
-  const mapa = L.map('mapa').setView([-25.7, -57.2], 10);
+  const mapa = L.map('mapa').setView([-25.7, -57.2], 9);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(mapa);
 
-  let buses = {};
+  // ----- Datos -----
+  let empresas = {}, rutas = {}, colectivos = {}, buses = {};
   const marcadores = {};
-  let centrado = false;
+  const geometrias = {};
+  let seleccionado = null, capaRuta = null;
+  let filtro = null, empresaAbierta = null;
+  let miPos = null, miMarcador = null;
+  let activosPrevios = null, centrado = false;
+  let avisos = cargarAvisos();
+  const MAX_SIN_SENAL = 10 * 60 * 1000; // 10 minutos sin señal = ya no está en recorrido
 
-  function detalle(b) {
-    const seg = Math.round((Date.now() - b.hora) / 1000);
-    return '<b>Colectivo N° ' + esc(b.numero) + '</b><br>' +
-      'Chapa: ' + esc(b.chapa) + ' · Año: ' + esc(b.anio) + '<br>' +
-      'Conductor: ' + esc(b.chofer) + '<br>' +
-      'Guarda: ' + esc(b.guarda) + '<br>' +
-      'Ruta: ' + esc(b.ruta) + '<br>' +
-      'Salida: ' + esc(b.salida) + ' hs<br>' +
-      'Última señal hace ' + seg + ' segundos';
+  function km(a, b) { return mapa.distance([a.lat, a.lng], [b.lat, b.lng]) / 1000; }
+  function paradasDe(rid) { const r = rutas[rid]; return r && r.paradas ? Object.values(r.paradas) : []; }
+  function estaActivo(id) { const b = buses[id]; return !!(b && Date.now() - b.hora < MAX_SIN_SENAL); }
+  function activos() { return Object.keys(buses).filter(estaActivo); }
+
+  function indice(rid, nombre) {
+    const q = norm(nombre);
+    return paradasDe(rid).findIndex(function (s) { return norm(s.nombre).indexOf(q) >= 0; });
   }
 
-  function dibujar() {
-    const ids = Object.keys(buses);
-    $('info').textContent = ids.length ? ids.length + ' colectivo(s) en recorrido' : 'No hay colectivos en recorrido';
-    let html = '';
-    ids.forEach(function (id) {
-      html += '<div class="bus" data-id="' + esc(id) + '">' + detalle(buses[id]) + '</div>';
-      if (marcadores[id]) { marcadores[id].setPopupContent(detalle(buses[id])); }
+  function paradaCercana(rid, p) {
+    let mejor = null;
+    paradasDe(rid).forEach(function (s, i) {
+      const d = km(s, p);
+      if (!mejor || d < mejor.d) { mejor = { i: i, nombre: s.nombre, d: d }; }
     });
-    $('lista').innerHTML = html;
+    return mejor;
   }
 
-  $('lista').onclick = function (e) {
-    const el = e.target.closest('.bus');
-    if (!el) return;
-    const id = el.dataset.id;
-    if (buses[id] && marcadores[id]) {
-      mapa.setView([buses[id].lat, buses[id].lng], 15);
-      marcadores[id].openPopup();
+  function dondeEsta(id) {
+    const c = colectivos[id] || {};
+    const b = buses[id];
+    if (!b) return '';
+    const pc = paradaCercana(c.rutaId, b);
+    if (!pc) return '';
+    return (pc.d < 3 ? 'En ' : 'Cerca de ') + pc.nombre;
+  }
+
+  // Punto del pasajero: su ubicación, o la parada de "Salgo desde"
+  function puntoRef() {
+    if (miPos) return miPos;
+    if (filtro && filtro.desde && filtro.rutas.length) {
+      const rid = filtro.rutas[0];
+      const i = indice(rid, filtro.desde);
+      if (i >= 0) return paradasDe(rid)[i];
     }
-  };
-  function iconoBus() {
-    return L.divIcon({
-      className: '',
-      html: '<div class="bus-icono"><div class="flecha"></div><span>🚌</span></div>',
-      iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -22]
-    });
+    return null;
   }
 
-  function girar(m, r) {
-    const el = m.getElement();
-    if (!el) return;
-    const f = el.querySelector('.flecha');
-    if (r == null) { f.style.display = 'none'; }
-    else { f.style.display = 'block'; f.style.transform = 'rotate(' + r + 'deg)'; }
+  // ¿El colectivo viene hacia el pasajero o ya pasó su parada?
+  function viene(id) {
+    const c = colectivos[id], b = buses[id];
+    const ref = puntoRef();
+    if (!c || !b || !ref) return null;
+    const mia = paradaCercana(c.rutaId, ref);
+    const suya = paradaCercana(c.rutaId, b);
+    if (!mia || !suya) return null;
+    return suya.i <= mia.i;
   }
-  db.ref('buses').on('value', function (snap) {
-    buses = snap.val() || {};
+
+  function proximaSalida(c) {
+    const lista = Object.values(c.salidas || {}).slice().sort();
+    if (!lista.length) return '';
+    const n = new Date();
+    const hm = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+    const prox = lista.filter(function (s) { return s >= hm; })[0];
+    return prox ? prox + ' hs' : lista[0] + ' hs (mañana)';
+  }
+
+  // ----- Ícono del colectivo (el frente apunta hacia donde va) -----
+  function iconoBus(rumbo, sel) {
+    const color = sel ? '#e8710a' : '#1a73e8';
+    const r = (rumbo == null || isNaN(rumbo)) ? null : rumbo;
+    const t = sel ? 50 : 40;
+    const svg =
+      '<svg width="' + t + '" height="' + t + '" viewBox="0 0 40 40">' +
+      '<g transform="rotate(' + (r || 0) + ' 20 20)">' +
+      (r == null ? '' : '<path d="M20 0 L26 7 L14 7 Z" fill="' + color + '"/>') +
+      '<rect x="12" y="8" width="16" height="28" rx="4" fill="' + color + '" stroke="#fff" stroke-width="2"/>' +
+      '<rect x="14.5" y="11" width="11" height="5" rx="1.5" fill="#d2e3fc"/>' +
+      '<rect x="14.5" y="19" width="11" height="3" rx="1" fill="#fff" opacity=".5"/>' +
+      '<rect x="14.5" y="25" width="11" height="3" rx="1" fill="#fff" opacity=".5"/>' +
+      '</g></svg>';
+    return L.divIcon({ className: 'icono-bus', html: svg, iconSize: [t, t], iconAnchor: [t / 2, t / 2] });
+  }
+
+  function visibleEnMapa(id) {
+    if (!filtro) return true;
+    const c = colectivos[id];
+    return !!(c && filtro.rutas.indexOf(c.rutaId) >= 0);
+  }
+
+  function actualizarMarcadores() {
+    const ids = activos().filter(visibleEnMapa);
     Object.keys(marcadores).forEach(function (id) {
-      if (!buses[id]) { mapa.removeLayer(marcadores[id]); delete marcadores[id]; }
+      if (ids.indexOf(id) < 0) { mapa.removeLayer(marcadores[id]); delete marcadores[id]; }
     });
-    const ids = Object.keys(buses);
     ids.forEach(function (id) {
       const b = buses[id];
-           if (!marcadores[id]) {
-        marcadores[id] = L.marker([b.lat, b.lng], { icon: iconoBus() }).addTo(mapa).bindPopup(detalle(b));
+      const icono = iconoBus(b.rumbo, id === seleccionado);
+      if (!marcadores[id]) {
+        marcadores[id] = L.marker([b.lat, b.lng], { icon: icono }).addTo(mapa);
+        marcadores[id].on('click', function () { seleccionar(id); });
       } else {
         marcadores[id].setLatLng([b.lat, b.lng]);
+        marcadores[id].setIcon(icono);
       }
-      girar(marcadores[id], b.rumbo);
+      marcadores[id].setZIndexOffset(id === seleccionado ? 1000 : 0);
     });
     if (!centrado && ids.length) {
-      mapa.fitBounds(ids.map(function (id) { return [buses[id].lat, buses[id].lng]; }),
-        { maxZoom: 14, padding: [30, 30] });
+      mapa.fitBounds(ids.map(function (id) { return [buses[id].lat, buses[id].lng]; }), { maxZoom: 13, padding: [40, 40] });
       centrado = true;
     }
-    dibujar();
+  }
+
+  // ----- Ruta del colectivo seleccionado -----
+  function obtenerGeometria(rid) {
+    if (geometrias[rid]) return Promise.resolve(geometrias[rid]);
+    const ps = paradasDe(rid);
+    const recta = ps.map(function (p) { return [p.lat, p.lng]; });
+    if (ps.length < 2) return Promise.resolve(recta);
+    const coords = ps.map(function (p) { return p.lng + ',' + p.lat; }).join(';');
+    return fetch('https://router.project-osrm.org/route/v1/driving/' + coords + '?overview=full&geometries=geojson')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        const g = j.routes[0].geometry.coordinates.map(function (c) { return [c[1], c[0]]; });
+        geometrias[rid] = g;
+        return g;
+      })
+      .catch(function () { geometrias[rid] = recta; return recta; });
+  }
+
+  function borrarRuta() {
+    if (capaRuta) { mapa.removeLayer(capaRuta.grupo); capaRuta = null; }
+  }
+
+  function dibujarRuta() {
+    borrarRuta();
+    const id = seleccionado;
+    const c = colectivos[id];
+    if (!c || !c.rutaId) return;
+    obtenerGeometria(c.rutaId).then(function (g) {
+      if (seleccionado !== id) return;
+      borrarRuta();
+      const grupo = L.layerGroup().addTo(mapa);
+      capaRuta = {
+        grupo: grupo, geo: g,
+        hecha: L.polyline([], { color: '#9aa0a6', weight: 5, opacity: 0.9 }).addTo(grupo),
+        falta: L.polyline([], { color: '#e8710a', weight: 6 }).addTo(grupo)
+      };
+      paradasDe(c.rutaId).forEach(function (p) {
+        L.circleMarker([p.lat, p.lng], { radius: 6, color: '#e8710a', weight: 3, fillColor: '#fff', fillOpacity: 1 })
+          .bindTooltip(esc(p.nombre)).addTo(grupo);
+      });
+      actualizarRuta();
+      mapa.fitBounds(L.latLngBounds(g), { padding: [30, 30] });
+    });
+  }
+
+  // Gris = lo que ya recorrió, naranja = lo que le falta
+  function actualizarRuta() {
+    if (!capaRuta) return;
+    const g = capaRuta.geo;
+    const b = estaActivo(seleccionado) ? buses[seleccionado] : null;
+    if (!b) { capaRuta.hecha.setLatLngs([]); capaRuta.falta.setLatLngs(g); return; }
+    let k = 0, mejor = Infinity;
+    g.forEach(function (p, i) {
+      const d = Math.pow(p[0] - b.lat, 2) + Math.pow(p[1] - b.lng, 2);
+      if (d < mejor) { mejor = d; k = i; }
+    });
+    capaRuta.hecha.setLatLngs(g.slice(0, k + 1).concat([[b.lat, b.lng]]));
+    capaRuta.falta.setLatLngs([[b.lat, b.lng]].concat(g.slice(k + 1)));
+  }
+
+  function seleccionar(id) {
+    if (seleccionado === id) { deseleccionar(); return; }
+    seleccionado = id;
+    dibujarRuta();
+    actualizarMarcadores();
+    render();
+    if (window.innerWidth <= 700) { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  }
+
+  function deseleccionar() {
+    seleccionado = null;
+    borrarRuta();
+    actualizarMarcadores();
+    render();
+  }
+
+  // ----- Panel izquierdo -----
+  function filaBus(id, masCerca) {
+    const c = colectivos[id] || {};
+    const e = empresas[c.empresa];
+    let estado;
+    if (estaActivo(id)) {
+      estado = '<span class="etq">En recorrido</span> ' + esc(dondeEsta(id));
+      const ref = puntoRef();
+      if (ref) {
+        estado += '<br><small>A ' + km(buses[id], ref).toFixed(1) + ' km de vos';
+        const v = viene(id);
+        if (v === true) estado += ' · viene hacia vos';
+        if (v === false) estado += ' · ya pasó';
+        estado += '</small>';
+      }
+    } else {
+      estado = '<span class="etq gris">Sale ' + esc(proximaSalida(c) || 'sin horario') + '</span>';
+    }
+    return '<div class="bus-fila' + (id === seleccionado ? ' sel' : '') + '" data-id="' + esc(id) + '">' +
+      '<div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> ' +
+      (masCerca ? '<span class="etq azul">⭐ Más cerca</span>' : '') +
+      '<br><small>' + esc(e ? e.nombre : '') + ' · ' + esc(c.ruta) + '</small><br>' + estado + '</div>' +
+      '<button class="campana" data-aviso="' + esc(id) + '" title="Avisarme cuando salga">' +
+      (avisos[id] ? '🔔' : '🔕') + '</button></div>';
+  }
+
+  function ordenar(ids) {
+    const ref = puntoRef();
+    return ids.slice().sort(function (a, b) {
+      const aa = estaActivo(a), ab = estaActivo(b);
+      if (aa !== ab) return aa ? -1 : 1;
+      if (aa && ab) {
+        const va = viene(a) !== false, vb = viene(b) !== false;
+        if (va !== vb) return va ? -1 : 1;
+        if (ref) return km(buses[a], ref) - km(buses[b], ref);
+      }
+      return (colectivos[a].numero || 0) - (colectivos[b].numero || 0);
+    });
+  }
+
+  function renderDetalle() {
+    const box = $('detalle');
+    if (!seleccionado || !colectivos[seleccionado]) { box.classList.add('oculto'); return; }
+    const id = seleccionado;
+    const c = colectivos[id];
+    const e = empresas[c.empresa];
+    let h = '<div class="det-cab"><b>🚌 Colectivo N° ' + esc(c.numero) + '</b>' +
+      '<button id="cerrarDetalle" class="cerrar">✕</button></div>' +
+      'Empresa: ' + esc(e ? e.nombre : '-') + '<br>' +
+      'Chapa: ' + esc(c.chapa) + ' · Año: ' + esc(c.anio) + '<br>' +
+      'Conductor: ' + esc(c.chofer) + '<br>' +
+      'Guarda: ' + esc(c.guarda) + '<br>' +
+      'Ruta: ' + esc(c.ruta) + '<br>';
+    if (estaActivo(id)) {
+      const b = buses[id];
+      h += '<span class="etq">En recorrido</span> salió ' + esc(b.salida) + ' hs<br>' +
+        '📍 Ahora: ' + esc(dondeEsta(id)) + '<br>';
+      const ref = puntoRef();
+      if (ref) {
+        h += 'A ' + km(b, ref).toFixed(1) + ' km de vos';
+        const v = viene(id);
+        if (v === true) h += ' · viene hacia vos';
+        if (v === false) h += ' · ya pasó tu parada';
+        h += '<br>';
+      }
+      h += '<small id="senal"></small>';
+    } else {
+      h += '<span class="etq gris">No está en recorrido</span><br>' +
+        'Salidas: ' + esc(Object.values(c.salidas || {}).join(', ') || '-') + ' hs';
+    }
+    box.innerHTML = h;
+    box.classList.remove('oculto');
+    actualizarSenal();
+  }
+
+  function actualizarSenal() {
+    const s = $('senal');
+    if (s && seleccionado && buses[seleccionado]) {
+      s.textContent = 'Última señal hace ' + Math.round((Date.now() - buses[seleccionado].hora) / 1000) + ' segundos';
+    }
+  }
+
+  function renderResultados() {
+    const cont = $('resultados');
+    if (!filtro) { cont.innerHTML = ''; $('tituloRes').classList.add('oculto'); return; }
+    $('tituloRes').classList.remove('oculto');
+    const ids = Object.keys(colectivos).filter(function (id) {
+      return filtro.rutas.indexOf(colectivos[id].rutaId) >= 0;
+    });
+    if (!ids.length) { cont.innerHTML = '<p>No hay colectivos para ese trayecto.</p>'; return; }
+    const lista = ordenar(ids);
+    const primero = lista.filter(function (id) { return estaActivo(id) && viene(id) !== false; })[0];
+    cont.innerHTML = lista.map(function (id) { return filaBus(id, id === primero); }).join('');
+  }
+
+  function renderEmpresas() {
+    let html = '';
+    Object.keys(empresas).forEach(function (eid) {
+      const ids = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; });
+      const n = ids.filter(estaActivo).length;
+      html += '<div class="empresa" data-empresa="' + esc(eid) + '"><b>' +
+        (empresaAbierta === eid ? '▾ ' : '▸ ') + esc(empresas[eid].nombre) + '</b>' +
+        '<span>' + n + ' de ' + ids.length + ' en recorrido</span></div>';
+      if (empresaAbierta === eid) {
+        html += ordenar(ids).map(function (id) { return filaBus(id, false); }).join('') ||
+          '<p>Esta empresa no tiene colectivos cargados.</p>';
+      }
+    });
+    $('empresas').innerHTML = html;
+  }
+
+  function render() {
+    const n = activos().length;
+    $('contador').textContent = n + (n === 1 ? ' colectivo en recorrido' : ' colectivos en recorrido');
+    renderDetalle();
+    renderResultados();
+    renderEmpresas();
+  }
+
+  // ----- Buscador -----
+  function llenarParadas() {
+    const nombres = {};
+    Object.keys(rutas).forEach(function (rid) {
+      paradasDe(rid).forEach(function (p) { nombres[p.nombre] = true; });
+    });
+    $('listaParadas').innerHTML = Object.keys(nombres).map(function (n) {
+      return '<option value="' + esc(n) + '">';
+    }).join('');
+  }
+
+  function buscar() {
+    const d = $('desde').value, h = $('hasta').value;
+    if (!d.trim() && !h.trim()) { limpiar(); return; }
+    const ok = Object.keys(rutas).filter(function (rid) {
+      const a = d.trim() ? indice(rid, d) : 0;
+      const b = h.trim() ? indice(rid, h) : paradasDe(rid).length - 1;
+      return a >= 0 && b >= 0 && a < b;
+    });
+    filtro = { desde: d, hasta: h, rutas: ok };
+    if (seleccionado && !visibleEnMapa(seleccionado)) { seleccionado = null; borrarRuta(); }
+    actualizarMarcadores();
+    render();
+  }
+
+  function limpiar() {
+    $('desde').value = ''; $('hasta').value = '';
+    filtro = null;
+    actualizarMarcadores();
+    render();
+  }
+
+  $('btnBuscar').onclick = buscar;
+  $('btnLimpiar').onclick = limpiar;
+  $('hasta').addEventListener('keydown', function (e) { if (e.key === 'Enter') buscar(); });
+
+  $('btnUbic').onclick = function () {
+    if (!navigator.geolocation) { mostrarToast('Tu navegador no permite usar la ubicación'); return; }
+    $('btnUbic').textContent = 'Buscando tu ubicación...';
+    navigator.geolocation.getCurrentPosition(function (p) {
+      miPos = { lat: p.coords.latitude, lng: p.coords.longitude };
+      if (!miMarcador) {
+        miMarcador = L.circleMarker([miPos.lat, miPos.lng], {
+          radius: 9, color: '#fff', weight: 3, fillColor: '#d93025', fillOpacity: 1
+        }).bindTooltip('Vos').addTo(mapa);
+      } else {
+        miMarcador.setLatLng([miPos.lat, miPos.lng]);
+      }
+      mapa.setView([miPos.lat, miPos.lng], 12);
+      $('btnUbic').textContent = '📍 Ubicación activada';
+      render();
+    }, function () {
+      $('btnUbic').textContent = '📍 Usar mi ubicación';
+      mostrarToast('No se pudo obtener tu ubicación');
+    }, { enableHighAccuracy: true });
+  };
+
+  // ----- Clics en el panel -----
+  $('panel').addEventListener('click', function (e) {
+    const bell = e.target.closest('[data-aviso]');
+    if (bell) { alternarAviso(bell.dataset.aviso); return; }
+    if (e.target.id === 'cerrarDetalle') { deseleccionar(); return; }
+    const emp = e.target.closest('[data-empresa]');
+    if (emp) {
+      empresaAbierta = (empresaAbierta === emp.dataset.empresa) ? null : emp.dataset.empresa;
+      render();
+      return;
+    }
+    const fila = e.target.closest('.bus-fila');
+    if (fila) { seleccionar(fila.dataset.id); }
   });
 
-  setInterval(dibujar, 1000);
+  // ----- Campanita: avisos -----
+  function cargarAvisos() {
+    try { return JSON.parse(localStorage.getItem('avisos') || '{}'); } catch (e) { return {}; }
+  }
+  function guardarAvisos() {
+    try { localStorage.setItem('avisos', JSON.stringify(avisos)); } catch (e) {}
+  }
+  function alternarAviso(id) {
+    const c = colectivos[id] || {};
+    if (avisos[id]) {
+      delete avisos[id];
+      mostrarToast('Aviso desactivado para el colectivo N° ' + c.numero);
+    } else {
+      avisos[id] = true;
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+      mostrarToast('Te avisamos cuando el N° ' + c.numero + ' empiece su recorrido (con esta página abierta)');
+    }
+    guardarAvisos();
+    render();
+  }
+  function revisarAvisos() {
+    const ahora = activos();
+    if (activosPrevios) {
+      ahora.forEach(function (id) {
+        if (activosPrevios.indexOf(id) < 0 && avisos[id]) { avisar(id); }
+      });
+    }
+    activosPrevios = ahora;
+  }
+  function avisar(id) {
+    const c = colectivos[id] || {};
+    const txt = 'El colectivo N° ' + c.numero + ' (' + (c.ruta || '') + ') comenzó su recorrido';
+    mostrarToast('🔔 ' + txt);
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try { new Notification('Colectivo en camino', { body: txt }); } catch (e) {}
+    }
+  }
+
+  let toastTimer = null;
+  function mostrarToast(t) {
+    const el = $('toast');
+    el.textContent = t;
+    el.classList.remove('oculto');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.add('oculto'); }, 5000);
+  }
+
+  // ----- Escuchar Firebase en tiempo real -----
+  db.ref('empresas').on('value', function (s) { empresas = s.val() || {}; render(); });
+  db.ref('rutas').on('value', function (s) { rutas = s.val() || {}; llenarParadas(); render(); });
+  db.ref('colectivos').on('value', function (s) {
+    colectivos = s.val() || {};
+    actualizarMarcadores();
+    render();
+  });
+  db.ref('buses').on('value', function (s) {
+    buses = s.val() || {};
+    revisarAvisos();
+    actualizarMarcadores();
+    actualizarRuta();
+    render();
+  });
+
+  setInterval(actualizarSenal, 1000);
+  setInterval(function () { revisarAvisos(); actualizarMarcadores(); actualizarRuta(); render(); }, 30000);
 </script>
 </body>
 </html>
