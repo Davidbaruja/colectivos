@@ -31,6 +31,9 @@
   .campana { width: auto; background: none; font-size: 22px; padding: 4px; margin: 0; }
   .empresa { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-radius: 10px; background: #e8f0fe; margin: 6px 0; cursor: pointer; }
   .empresa span { font-size: 13px; color: #5f6368; }
+  .empresa .der { display: flex; align-items: center; gap: 6px; }
+  .pref { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #5f6368; margin: 6px 0; }
+  .pref select { font-size: 15px; padding: 6px; border-radius: 8px; border: 1px solid #ccc; }
   .etq { display: inline-block; font-size: 12px; padding: 2px 7px; border-radius: 6px; background: #188038; color: #fff; }
   .etq.gris { background: #80868b; }
   .etq.azul { background: #1a73e8; }
@@ -62,6 +65,14 @@
     <div id="resultados"></div>
 
     <h3 id="contador">Cargando...</h3>
+    <div class="pref">🔔 Avisarme
+      <select id="minAntes">
+        <option value="15">15 min</option>
+        <option value="30" selected>30 min</option>
+        <option value="60">1 hora</option>
+      </select>
+      antes de cada salida
+    </div>
     <div id="empresas"></div>
   </div>
   <div id="mapa"></div>
@@ -103,7 +114,10 @@
   let filtro = null, empresaAbierta = null;
   let miPos = null, miMarcador = null;
   let activosPrevios = null, centrado = false;
-  let avisos = cargarAvisos();
+  let avisos = cargar('avisos');        // campanita de cada colectivo
+  let avisosEmp = cargar('avisosEmp');  // campanita de cada empresa
+  let enviados = cargar('enviados');    // avisos de "está por salir" ya mandados hoy
+  let minAntes = Number(cargarTexto('minAntes') || 30);
   const MAX_SIN_SENAL = 10 * 60 * 1000; // 10 minutos sin señal = ya no está en recorrido
 
   function km(a, b) { return mapa.distance([a.lat, a.lng], [b.lat, b.lng]) / 1000; }
@@ -388,7 +402,9 @@
       const n = ids.filter(estaActivo).length;
       html += '<div class="empresa" data-empresa="' + esc(eid) + '"><b>' +
         (empresaAbierta === eid ? '▾ ' : '▸ ') + esc(empresas[eid].nombre) + '</b>' +
-        '<span>' + n + ' de ' + ids.length + ' en recorrido</span></div>';
+        '<div class="der"><span>' + n + ' de ' + ids.length + ' en recorrido</span>' +
+        '<button class="campana" data-avisoemp="' + esc(eid) + '" title="Avisarme de todos sus colectivos">' +
+        (avisosEmp[eid] ? '🔔' : '🔕') + '</button></div></div>';
       if (empresaAbierta === eid) {
         html += ordenar(ids).map(function (id) { return filaBus(id, false); }).join('') ||
           '<p>Esta empresa no tiene colectivos cargados.</p>';
@@ -464,6 +480,8 @@
 
   // ----- Clics en el panel -----
   $('panel').addEventListener('click', function (e) {
+    const bellEmp = e.target.closest('[data-avisoemp]');
+    if (bellEmp) { alternarAvisoEmpresa(bellEmp.dataset.avisoemp); return; }
     const bell = e.target.closest('[data-aviso]');
     if (bell) { alternarAviso(bell.dataset.aviso); return; }
     if (e.target.id === 'cerrarDetalle') { deseleccionar(); return; }
@@ -478,42 +496,115 @@
   });
 
   // ----- Campanita: avisos -----
-  function cargarAvisos() {
-    try { return JSON.parse(localStorage.getItem('avisos') || '{}'); } catch (e) { return {}; }
+  function cargar(k) {
+    try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) { return {}; }
   }
-  function guardarAvisos() {
-    try { localStorage.setItem('avisos', JSON.stringify(avisos)); } catch (e) {}
+  function cargarTexto(k) {
+    try { return localStorage.getItem(k); } catch (e) { return null; }
   }
+  function guardar(k, v) {
+    try { localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); } catch (e) {}
+  }
+  function pedirPermiso() {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }
+  // ¿Este colectivo tiene aviso? (por su campanita o por la de su empresa)
+  function suscrito(id) {
+    const c = colectivos[id];
+    return !!(avisos[id] || (c && avisosEmp[c.empresa]));
+  }
+
   function alternarAviso(id) {
     const c = colectivos[id] || {};
     if (avisos[id]) {
       delete avisos[id];
-      mostrarToast('Aviso desactivado para el colectivo N° ' + c.numero);
+      mostrarToast('Avisos desactivados para el N° ' + c.numero);
     } else {
       avisos[id] = true;
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
-      mostrarToast('Te avisamos cuando el N° ' + c.numero + ' empiece su recorrido (con esta página abierta)');
+      pedirPermiso();
+      mostrarToast('Te avisamos ' + minAntes + ' min antes de que salga el N° ' + c.numero + ' y cuando inicie su recorrido');
     }
-    guardarAvisos();
+    guardar('avisos', avisos);
     render();
   }
+
+  function alternarAvisoEmpresa(eid) {
+    const nombre = empresas[eid] ? empresas[eid].nombre : '';
+    if (avisosEmp[eid]) {
+      delete avisosEmp[eid];
+      mostrarToast('Avisos desactivados para ' + nombre);
+    } else {
+      avisosEmp[eid] = true;
+      pedirPermiso();
+      mostrarToast('Te avisamos de todos los colectivos de ' + nombre + ': ' + minAntes + ' min antes de salir y al iniciar recorrido');
+    }
+    guardar('avisosEmp', avisosEmp);
+    render();
+  }
+
+  $('minAntes').value = String(minAntes);
+  $('minAntes').onchange = function () {
+    minAntes = Number(this.value);
+    guardar('minAntes', String(minAntes));
+    mostrarToast('Ahora te avisamos ' + this.options[this.selectedIndex].text + ' antes de cada salida');
+    revisarSalidas();
+  };
+
+  function infoBus(id) {
+    const c = colectivos[id] || {};
+    const e = empresas[c.empresa];
+    return 'N° ' + c.numero + ' · ' + (e ? e.nombre : '') + ' · ' + (c.ruta || '') +
+      '\nChapa ' + (c.chapa || '-') + ' · Conductor: ' + (c.chofer || '-');
+  }
+
+  // Aviso 1: "Inicio de recorrido"
   function revisarAvisos() {
     const ahora = activos();
     if (activosPrevios) {
       ahora.forEach(function (id) {
-        if (activosPrevios.indexOf(id) < 0 && avisos[id]) { avisar(id); }
+        if (activosPrevios.indexOf(id) < 0 && suscrito(id)) {
+          const b = buses[id];
+          notificar('🚌 Inicio de recorrido',
+            infoBus(id) + '\nSalió ' + (b.salida || '') + ' hs · ' + dondeEsta(id), id);
+        }
       });
     }
     activosPrevios = ahora;
   }
-  function avisar(id) {
-    const c = colectivos[id] || {};
-    const txt = 'El colectivo N° ' + c.numero + ' (' + (c.ruta || '') + ') comenzó su recorrido';
-    mostrarToast('🔔 ' + txt);
+
+  // Aviso 2: "Está por salir" (X minutos antes de su horario)
+  function revisarSalidas() {
+    const n = new Date();
+    const hoy = n.getFullYear() + '-' + (n.getMonth() + 1) + '-' + n.getDate();
+    // Borrar registros de días anteriores
+    Object.keys(enviados).forEach(function (k) { if (k.indexOf(hoy) !== 0) delete enviados[k]; });
+    Object.keys(colectivos).forEach(function (id) {
+      if (!suscrito(id) || estaActivo(id)) return;
+      const c = colectivos[id];
+      Object.values(c.salidas || {}).forEach(function (s) {
+        const p = String(s).split(':');
+        const salida = new Date(n.getFullYear(), n.getMonth(), n.getDate(), Number(p[0]), Number(p[1]));
+        const faltan = Math.round((salida - n) / 60000);
+        const clave = hoy + '|' + id + '|' + s;
+        if (faltan >= 0 && faltan <= minAntes && !enviados[clave]) {
+          enviados[clave] = true;
+          notificar('⏰ Está por salir',
+            infoBus(id) + '\nSale a las ' + s + ' hs (en ' + faltan + ' min)', id);
+        }
+      });
+    });
+    guardar('enviados', enviados);
+  }
+
+  function notificar(titulo, cuerpo, id) {
+    mostrarToast(titulo + ': ' + cuerpo.split('\n')[0]);
     if ('Notification' in window && Notification.permission === 'granted') {
-      try { new Notification('Colectivo en camino', { body: txt }); } catch (e) {}
+      try {
+        const noti = new Notification(titulo, { body: cuerpo, tag: titulo + id });
+        noti.onclick = function () { window.focus(); if (seleccionado !== id) seleccionar(id); };
+      } catch (e) {}
     }
   }
 
@@ -532,6 +623,7 @@
   db.ref('colectivos').on('value', function (s) {
     colectivos = s.val() || {};
     actualizarMarcadores();
+    revisarSalidas();
     render();
   });
   db.ref('buses').on('value', function (s) {
@@ -543,7 +635,7 @@
   });
 
   setInterval(actualizarSenal, 1000);
-  setInterval(function () { revisarAvisos(); actualizarMarcadores(); actualizarRuta(); render(); }, 30000);
+  setInterval(function () { revisarAvisos(); revisarSalidas(); actualizarMarcadores(); actualizarRuta(); render(); }, 30000);
 </script>
 </body>
 </html>
