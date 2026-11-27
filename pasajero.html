@@ -171,6 +171,80 @@
     return prox ? prox + ' hs' : lista[0] + ' hs (mañana)';
   }
 
+  // ----- Hora estimada de llegada -----
+  const historia = {};      // últimas posiciones de cada colectivo (para calcular su velocidad real)
+  const pidiendoGeo = {};
+  const VEL_DEFECTO = 40;   // km/h, si todavía no se pudo medir la velocidad real
+
+  function registrarPosiciones() {
+    Object.keys(historia).forEach(function (id) { if (!buses[id]) delete historia[id]; });
+    Object.keys(buses).forEach(function (id) {
+      const b = buses[id];
+      const h = historia[id] = historia[id] || [];
+      const ult = h[h.length - 1];
+      if (ult && ult.t === b.hora) return;
+      h.push({ t: b.hora, lat: b.lat, lng: b.lng });
+      while (h.length && b.hora - h[0].t > 10 * 60 * 1000) { h.shift(); }
+    });
+  }
+
+  // Velocidad real medida en los últimos 5 minutos (null si todavía hay pocos datos)
+  function velocidadKmh(id) {
+    const h = historia[id] || [];
+    if (h.length < 2) return null;
+    const p1 = h[h.length - 1];
+    const p0 = h.filter(function (p) { return p1.t - p.t <= 5 * 60 * 1000; })[0];
+    if (!p0 || p1.t - p0.t < 60000) return null;
+    return km(p0, p1) / ((p1.t - p0.t) / 3600000);
+  }
+
+  function geoListo(rid) {
+    if (geometrias[rid]) return geometrias[rid];
+    if (rid && !pidiendoGeo[rid]) {
+      pidiendoGeo[rid] = true;
+      obtenerGeometria(rid).then(function () { render(); });
+    }
+    return null;
+  }
+
+  function indiceCercano(g, p) {
+    let k = 0, mejor = Infinity;
+    g.forEach(function (q, i) {
+      const d = Math.pow(q[0] - p.lat, 2) + Math.pow(q[1] - p.lng, 2);
+      if (d < mejor) { mejor = d; k = i; }
+    });
+    return k;
+  }
+
+  // Minutos que faltan para que llegue a tu punto (por la ruta, no en línea recta)
+  function etaMin(id) {
+    const c = colectivos[id], b = buses[id], ref = puntoRef();
+    if (!c || !b || !ref || !estaActivo(id) || viene(id) === false) return null;
+    let dist;
+    const g = geoListo(c.rutaId);
+    if (g && g.length > 1) {
+      const ib = indiceCercano(g, b), ir = indiceCercano(g, ref);
+      if (ir < ib) { return km(b, ref) < 0.3 ? { min: 0, real: true } : null; }
+      dist = 0;
+      for (let i = ib; i < ir; i++) { dist += mapa.distance(g[i], g[i + 1]) / 1000; }
+    } else {
+      dist = km(b, ref) * 1.3; // mientras carga la ruta: estimación en línea recta
+    }
+    const medida = velocidadKmh(id);
+    const v = Math.min(90, Math.max(15, medida || VEL_DEFECTO));
+    return { min: dist / v * 60, real: medida !== null };
+  }
+
+  function textoEta(id) {
+    const e = etaMin(id);
+    if (!e) return '';
+    if (e.min < 1) return '⏱ Está llegando';
+    let m = Math.round(e.min);
+    if (m >= 10) { m = Math.round(m / 5) * 5; }
+    const t = m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min';
+    return '⏱ Llega en ~' + t + (e.real ? '' : ' (aprox.)');
+  }
+
   // ----- Ícono del colectivo (el frente apunta hacia donde va) -----
   function iconoBus(rumbo, sel) {
     const color = sel ? '#e8710a' : '#1a73e8';
@@ -306,6 +380,8 @@
         if (v === true) estado += ' · viene hacia vos';
         if (v === false) estado += ' · ya pasó';
         estado += '</small>';
+        const eta = textoEta(id);
+        if (eta) { estado += '<br><b>' + eta + '</b>'; }
       }
     } else {
       estado = '<span class="etq gris">Sale ' + esc(proximaSalida(c) || 'sin horario') + '</span>';
@@ -365,6 +441,8 @@
         if (v === true) h += ' · viene hacia vos';
         if (v === false) h += ' · ya pasó tu parada';
         h += '<br>';
+        const eta = textoEta(id);
+        if (eta) { h += '<b>' + eta + '</b><br>'; }
       }
       h += '<small id="senal"></small>';
     } else {
@@ -620,6 +698,7 @@
   });
   db.ref('buses').on('value', function (s) {
     buses = s.val() || {};
+    registrarPosiciones();
     revisarAvisos();
     actualizarMarcadores();
     actualizarRuta();
