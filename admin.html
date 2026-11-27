@@ -169,6 +169,9 @@
     <label>Horarios de salida</label>
     <div id="fSalidas"></div>
     <button id="btnAddSalida" class="sec" type="button">+ Agregar horario</button>
+    <label style="display:flex;align-items:center;gap:8px;color:#202124;">
+      <input id="fFijo" type="checkbox" style="width:auto;margin:0;"> 📌 Horario fijo
+    </label>
 
     <label for="fUsuario">Usuario con el que el chofer ingresa</label>
     <input id="fUsuario" placeholder="Ej: juanperez" autocapitalize="none" autocorrect="off">
@@ -363,7 +366,7 @@
         html += '<div class="tarjeta"><div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> · ' + esc(c.chapa) +
           '<br><small>' + esc(c.ruta) + '</small>' +
           '<br><small>Conductor: ' + esc(c.chofer || '-') + ' · Guarda: ' + esc(c.guarda || '-') + '</small>' +
-          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + ' · Salidas: ' + esc(salidasLista(c).join(', ') || '-') + '</small>' +
+          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + ' · Salidas: ' + esc(salidasLista(c).join(', ') || '-') + (c.horarioFijo ? ' · 📌 Horario fijo' : '') + '</small>' +
           cambio + '</div>' +
           '<button class="chico" data-editar="' + esc(id) + '">Editar</button></div>';
       });
@@ -529,6 +532,7 @@
     $('fUsuario').value = id ? usuarioDe(id) : '';
     $('fClave').value = '';
     salidasForm = salidasLista(c);
+    $('fFijo').checked = !!c.horarioFijo;
     pintarSalidas();
     $('btnEliminar').classList.toggle('oculto', !id);
     ver('formCol');
@@ -619,6 +623,7 @@
     up[base + 'chofer'] = $('fChofer').value.trim();
     up[base + 'guarda'] = $('fGuarda').value.trim();
     up[base + 'salidas'] = horas.length ? horas : null;
+    up[base + 'horarioFijo'] = $('fFijo').checked ? true : null;
     if (usuario) { up['asignaciones/' + usuario] = id; }
     if (viejo && viejo !== usuario) { up['asignaciones/' + viejo] = null; }
 
@@ -657,7 +662,7 @@
   let mapa = null, capa = null;
 
   function paradasDe(rid) { const r = rutas[rid]; return r && r.paradas ? Object.values(r.paradas) : []; }
-  function puedeEditar(rid) { return esGeneral || rutas[rid].empresa === miEmpresa; }
+  function puedeEditar(rid) { return true; }
   function usanRuta(rid) {
     return Object.keys(colectivos).filter(function (id) { return colectivos[id].rutaId === rid; });
   }
@@ -798,7 +803,7 @@
 
   $('btnGuardarRuta').onclick = function () {
     if (paradasForm.length < 2) { aviso('Agregá al menos dos ciudades: salida y destino'); return; }
-    const emp = esGeneral ? $('rEmp').value : miEmpresa;
+    const emp = esGeneral ? $('rEmp').value : (rutaId ? (rutas[rutaId].empresa || null) : miEmpresa);
     const nombre = paradasForm[0].nombre + ' - ' + paradasForm[paradasForm.length - 1].nombre;
     if (rutaId && emp && usanRuta(rutaId).some(function (id) { return colectivos[id].empresa !== emp; })) {
       aviso('Otras empresas usan esta ruta. Tiene que seguir siendo general'); return;

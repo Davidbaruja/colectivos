@@ -522,7 +522,8 @@
       }
     } else {
       estado = '<span class="etq gris">Sale ' + esc(proximaSalida(id) || 'sin horario') + '</span>' +
-        (horarioCambiado(id) ? ' <small>🕒 horario cambiado hoy</small>' : '');
+        (horarioCambiado(id) ? ' <small>🕒 horario cambiado hoy</small>'
+          : (c.horarioFijo ? ' <span class="etq azul">📌 Horario fijo</span>' : ''));
     }
     return '<div class="bus-fila' + (id === seleccionado ? ' sel' : '') + '" data-id="' + esc(id) + '">' +
       '<div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> ' +
@@ -620,7 +621,8 @@
     } else {
       h += '<span class="etq gris">No está en recorrido</span><br>' +
         'Salidas: ' + esc(salidasDe(id).join(', ') || '-') + ' hs' +
-        (horarioCambiado(id) ? '<br><small>🕒 El chofer cambió el horario de hoy</small>' : '');
+        (horarioCambiado(id) ? '<br><small>🕒 El chofer cambió el horario de hoy</small>'
+          : (c.horarioFijo ? '<br><small>📌 Horario fijo</small>' : ''));
     }
     box.innerHTML = h;
     box.classList.remove('oculto');
