@@ -25,15 +25,14 @@
   button { background: #1a73e8; color: #fff; border: 0; cursor: pointer; }
   button.sec { background: #f1f3f4; color: #202124; }
   .fila { display: flex; gap: 6px; }
-  .bus-fila { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 10px; background: #f1f3f4; margin: 6px 0; border: 2px solid transparent; }
+  .bus-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border-radius: 10px; background: #f1f3f4; margin: 6px 0; border: 2px solid transparent; }
   .bus-fila.sel { border-color: #e8710a; background: #fef7e0; }
   .bus-fila .txt { flex: 1; cursor: pointer; line-height: 1.4; }
   .campana { width: auto; background: none; font-size: 22px; padding: 4px; margin: 0; }
   .empresa { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-radius: 10px; background: #e8f0fe; margin: 6px 0; cursor: pointer; }
   .empresa span { font-size: 13px; color: #5f6368; }
-  .empresa .der { display: flex; align-items: center; gap: 6px; }
-  .pref { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #5f6368; margin: 6px 0; }
-  .pref select { font-size: 15px; padding: 6px; border-radius: 8px; border: 1px solid #ccc; }
+  .aviso-min { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 14px; color: #5f6368; padding-top: 8px; border-top: 1px solid #dadce0; margin-top: 2px; }
+  .aviso-min select { font-size: 15px; padding: 6px; border-radius: 8px; border: 1px solid #ccc; width: auto; background: #fff; }
   .etq { display: inline-block; font-size: 12px; padding: 2px 7px; border-radius: 6px; background: #188038; color: #fff; }
   .etq.gris { background: #80868b; }
   .etq.azul { background: #1a73e8; }
@@ -65,14 +64,6 @@
     <div id="resultados"></div>
 
     <h3 id="contador">Cargando...</h3>
-    <div class="pref">🔔 Avisarme
-      <select id="minAntes">
-        <option value="15">15 min</option>
-        <option value="30" selected>30 min</option>
-        <option value="60">1 hora</option>
-      </select>
-      antes de cada salida
-    </div>
     <div id="empresas"></div>
   </div>
   <div id="mapa"></div>
@@ -115,9 +106,10 @@
   let miPos = null, miMarcador = null;
   let activosPrevios = null, centrado = false;
   let avisos = cargar('avisos');        // campanita de cada colectivo
-  let avisosEmp = cargar('avisosEmp');  // campanita de cada empresa
+  let minAvisos = cargar('minAvisos');  // minutos de aviso de cada colectivo
   let enviados = cargar('enviados');    // avisos de "está por salir" ya mandados hoy
-  let minAntes = Number(cargarTexto('minAntes') || 30);
+  const MIN_DEFECTO = 30;
+  function minDe(id) { return Number(minAvisos[id]) || MIN_DEFECTO; }
   const MAX_SIN_SENAL = 10 * 60 * 1000; // 10 minutos sin señal = ya no está en recorrido
 
   function km(a, b) { return mapa.distance([a.lat, a.lng], [b.lat, b.lng]) / 1000; }
@@ -301,7 +293,7 @@
   }
 
   // ----- Panel izquierdo -----
-  function filaBus(id, masCerca) {
+  function filaBus(id, masCerca, conAviso) {
     const c = colectivos[id] || {};
     const e = empresas[c.empresa];
     let estado;
@@ -323,7 +315,16 @@
       (masCerca ? '<span class="etq azul">⭐ Más cerca</span>' : '') +
       '<br><small>' + esc(e ? e.nombre : '') + ' · ' + esc(c.ruta) + '</small><br>' + estado + '</div>' +
       '<button class="campana" data-aviso="' + esc(id) + '" title="Avisarme cuando salga">' +
-      (avisos[id] ? '🔔' : '🔕') + '</button></div>';
+      (avisos[id] ? '🔔' : '🔕') + '</button>' +
+      (conAviso ? selectorAviso(id) : '') + '</div>';
+  }
+
+  function selectorAviso(id) {
+    const m = minDe(id);
+    function op(v, t) { return '<option value="' + v + '"' + (m === v ? ' selected' : '') + '>' + t + '</option>'; }
+    return '<div class="aviso-min">🔔 Avisarme ' +
+      '<select class="sel-min" data-id="' + esc(id) + '">' + op(15, '15 min') + op(30, '30 min') + op(60, '1 hora') + '</select>' +
+      ' antes de salir</div>';
   }
 
   function ordenar(ids) {
@@ -396,17 +397,18 @@
   }
 
   function renderEmpresas() {
+    // No redibujar mientras el pasajero está eligiendo un tiempo (se cerraría el selector)
+    const ae = document.activeElement;
+    if (ae && ae.classList && ae.classList.contains('sel-min')) return;
     let html = '';
     Object.keys(empresas).forEach(function (eid) {
       const ids = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; });
       const n = ids.filter(estaActivo).length;
       html += '<div class="empresa" data-empresa="' + esc(eid) + '"><b>' +
         (empresaAbierta === eid ? '▾ ' : '▸ ') + esc(empresas[eid].nombre) + '</b>' +
-        '<div class="der"><span>' + n + ' de ' + ids.length + ' en recorrido</span>' +
-        '<button class="campana" data-avisoemp="' + esc(eid) + '" title="Avisarme de todos sus colectivos">' +
-        (avisosEmp[eid] ? '🔔' : '🔕') + '</button></div></div>';
+        '<span>' + n + ' de ' + ids.length + ' en recorrido</span></div>';
       if (empresaAbierta === eid) {
-        html += ordenar(ids).map(function (id) { return filaBus(id, false); }).join('') ||
+        html += ordenar(ids).map(function (id) { return filaBus(id, false, true); }).join('') ||
           '<p>Esta empresa no tiene colectivos cargados.</p>';
       }
     });
@@ -480,8 +482,7 @@
 
   // ----- Clics en el panel -----
   $('panel').addEventListener('click', function (e) {
-    const bellEmp = e.target.closest('[data-avisoemp]');
-    if (bellEmp) { alternarAvisoEmpresa(bellEmp.dataset.avisoemp); return; }
+    if (e.target.closest('.aviso-min')) return;
     const bell = e.target.closest('[data-aviso]');
     if (bell) { alternarAviso(bell.dataset.aviso); return; }
     if (e.target.id === 'cerrarDetalle') { deseleccionar(); return; }
@@ -493,6 +494,20 @@
     }
     const fila = e.target.closest('.bus-fila');
     if (fila) { seleccionar(fila.dataset.id); }
+  });
+
+  $('panel').addEventListener('change', function (e) {
+    const sel = e.target.closest('.sel-min');
+    if (!sel) return;
+    const id = sel.dataset.id;
+    minAvisos[id] = Number(sel.value);
+    guardar('minAvisos', minAvisos);
+    const c = colectivos[id] || {};
+    mostrarToast('N° ' + c.numero + ': te avisamos ' + sel.options[sel.selectedIndex].text + ' antes de salir' +
+      (avisos[id] ? '' : ' (activá la campanita 🔔 para recibir el aviso)'));
+    sel.blur();
+    revisarSalidas();
+    render();
   });
 
   // ----- Campanita: avisos -----
@@ -510,11 +525,8 @@
       Notification.requestPermission();
     }
   }
-  // ¿Este colectivo tiene aviso? (por su campanita o por la de su empresa)
-  function suscrito(id) {
-    const c = colectivos[id];
-    return !!(avisos[id] || (c && avisosEmp[c.empresa]));
-  }
+  // ¿Este colectivo tiene aviso? (solo por su propia campanita)
+  function suscrito(id) { return !!avisos[id]; }
 
   function alternarAviso(id) {
     const c = colectivos[id] || {};
@@ -524,33 +536,11 @@
     } else {
       avisos[id] = true;
       pedirPermiso();
-      mostrarToast('Te avisamos ' + minAntes + ' min antes de que salga el N° ' + c.numero + ' y cuando inicie su recorrido');
+      mostrarToast('Te avisamos ' + minDe(id) + ' min antes de que salga el N° ' + c.numero + ' y cuando inicie su recorrido');
     }
     guardar('avisos', avisos);
     render();
   }
-
-  function alternarAvisoEmpresa(eid) {
-    const nombre = empresas[eid] ? empresas[eid].nombre : '';
-    if (avisosEmp[eid]) {
-      delete avisosEmp[eid];
-      mostrarToast('Avisos desactivados para ' + nombre);
-    } else {
-      avisosEmp[eid] = true;
-      pedirPermiso();
-      mostrarToast('Te avisamos de todos los colectivos de ' + nombre + ': ' + minAntes + ' min antes de salir y al iniciar recorrido');
-    }
-    guardar('avisosEmp', avisosEmp);
-    render();
-  }
-
-  $('minAntes').value = String(minAntes);
-  $('minAntes').onchange = function () {
-    minAntes = Number(this.value);
-    guardar('minAntes', String(minAntes));
-    mostrarToast('Ahora te avisamos ' + this.options[this.selectedIndex].text + ' antes de cada salida');
-    revisarSalidas();
-  };
 
   function infoBus(id) {
     const c = colectivos[id] || {};
@@ -588,7 +578,7 @@
         const salida = new Date(n.getFullYear(), n.getMonth(), n.getDate(), Number(p[0]), Number(p[1]));
         const faltan = Math.round((salida - n) / 60000);
         const clave = hoy + '|' + id + '|' + s;
-        if (faltan >= 0 && faltan <= minAntes && !enviados[clave]) {
+        if (faltan >= 0 && faltan <= minDe(id) && !enviados[clave]) {
           enviados[clave] = true;
           notificar('⏰ Está por salir',
             infoBus(id) + '\nSale a las ' + s + ' hs (en ' + faltan + ' min)', id);
