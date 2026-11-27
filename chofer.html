@@ -73,9 +73,16 @@
     const c = $('clave').value;
     $('error').textContent = '';
     if (!u || !c) { $('error').textContent = 'Completá usuario y contraseña'; return; }
-        auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function (e) {
-      $('error').textContent = 'Error: ' + e.code;
+            auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function (e) {
+      if (e.code === 'auth/network-request-failed') {
+        $('error').textContent = 'Sin conexión a internet. Revisá tu señal e intentá de nuevo';
+      } else if (e.code === 'auth/too-many-requests') {
+        $('error').textContent = 'Demasiados intentos. Esperá unos minutos';
+      } else {
+        $('error').textContent = 'Usuario o contraseña incorrectos';
+      }
     });
+
   };
 
   auth.onAuthStateChanged(function (user) {
