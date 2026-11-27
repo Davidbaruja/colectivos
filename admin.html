@@ -833,14 +833,12 @@
     }).sort(function (a, b) { return (colectivos[a].numero || 0) - (colectivos[b].numero || 0); });
   }
 
+  function geoDe(id) {
+    return capaRuta && capaRuta.clave.indexOf(id + '|') === 0 ? capaRuta.geo : null;
+  }
   function cercaDe(id) {
-    const b = buses[id];
-    let mejor = null, dist = Infinity;
-    paradasDe(colectivos[id].rutaId).forEach(function (p) {
-      const d = mapaVivo ? mapaVivo.distance([p.lat, p.lng], [b.lat, b.lng]) : Infinity;
-      if (d < dist) { dist = d; mejor = p; }
-    });
-    return mejor ? (dist < 3000 ? 'En ' : 'Cerca de ') + mejor.nombre : '';
+    if (!mapaVivo) return '';
+    return lugarEnRuta(buses[id], paradasDe(colectivos[id].rutaId), geoDe(id));
   }
 
   function hace(t) {
@@ -944,22 +942,54 @@
     });
     return { km: aqui, lejos: lejos, total: total };
   }
-  function cajasViaje(b, g, kmh) {
+  function horaDe(t) {
+    const d = new Date(t);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  // Hora real en que inició; si difiere de la programada, muestra las dos
+  function textoSalida(b) {
+    if (!b.inicio) return (b.salida || '-') + ' hs';
+    const real = horaDe(b.inicio);
+    const p = String(b.salida || '').split(':');
+    const d = new Date(b.inicio);
+    d.setHours(Number(p[0]), Number(p[1]), 0, 0);
+    const distinta = p.length === 2 && Math.abs(d - b.inicio) > 5 * 60000;
+    return real + ' hs' + (distinta ? ' (programada ' + b.salida + ')' : '');
+  }
+  // "En X", "Cerca de X" o "Entre X y Y" según dónde está sobre la ruta
+  function lugarEnRuta(b, ps, g) {
+    let cerca = null, d = Infinity;
+    ps.forEach(function (p) {
+      const x = distanciaM([p.lat, p.lng], [b.lat, b.lng]);
+      if (x < d) { d = x; cerca = p; }
+    });
+    if (!cerca) return '';
+    if (d < 3000) return 'En ' + cerca.nombre;
+    if (d < 10000 || !g || g.length < 2) return 'Cerca de ' + cerca.nombre;
+    const aqui = enRuta(g, b, distanciaM).km;
+    for (let i = 1; i < ps.length; i++) {
+      if (enRuta(g, ps[i], distanciaM).km >= aqui) return 'Entre ' + ps[i - 1].nombre + ' y ' + ps[i].nombre;
+    }
+    return 'Cerca de ' + cerca.nombre;
+  }
+  function cajasViaje(b, g, kmh, ps) {
     const lleva = minutosEnViaje(b);
-    let falta = 'Calculando...', llega = '', avance = null;
+    const destino = ps.length ? ps[ps.length - 1].nombre : 'el destino';
+    let falta = 'Calculando...', pie = '', hecho = '', avance = null;
     if (g && g.length > 1) {
       const r = enRuta(g, b, distanciaM);
       const resto = r.total - r.km;
       avance = r.total ? Math.round(r.km / r.total * 100) : 0;
+      hecho = Math.round(r.km) + ' km de la ruta';
       if (resto < 0.3) { falta = 'Llegando'; }
       else {
         const min = resto / kmh * 60;
         falta = '~' + duracion(min);
-        llega = 'a las ' + horaEn(min);
+        pie = Math.round(resto) + ' km · llega aprox. a las ' + horaEn(min);
       }
     }
-    return '<div class="tiempos"><div><small>⏱ Lleva recorrido</small><b>' + (lleva === null ? '-' : duracion(lleva)) + '</b></div>' +
-      '<div><small>🏁 Le falta</small><b>' + falta + '</b><small>' + llega + '</small></div></div>' +
+    return '<div class="tiempos"><div><small>⏱ En viaje hace</small><b>' + (lleva === null ? '-' : duracion(lleva)) + '</b><small>' + hecho + '</small></div>' +
+      '<div><small>🏁 Para llegar a ' + esc(destino) + '</small><b>' + falta + '</b><small>' + pie + '</small></div></div>' +
       (avance === null ? '' : '<div class="barra"><i style="width:' + avance + '%"></i></div>');
   }
 
@@ -1015,9 +1045,9 @@
         'Conductor: ' + esc(c.chofer || '-') + '<br>' +
         'Guarda: ' + esc(c.guarda || '-') + '<br>' +
         'Ruta: ' + esc(c.ruta || '-') + '<br>' +
-        'Salida: ' + esc(b.salida || '-') + ' hs<br>' +
+        'Salió: ' + esc(textoSalida(b)) + '<br>' +
         '📍 ' + esc(cercaDe(busSel) || 'En recorrido') + '<br>' +
-        cajasViaje(b, capaRuta && capaRuta.clave.indexOf(busSel + '|') === 0 ? capaRuta.geo : null, velocidadUsada(busSel)) +
+        cajasViaje(b, geoDe(busSel), velocidadUsada(busSel), paradasDe(c.rutaId)) +
         '<small>Última señal hace ' + hace(b.hora) + '</small>' +
         '<br><small><span style="color:#80868b">▬ Ya recorrió</span> · <span style="color:#e8710a">▬ Le falta</span></small>';
     }

@@ -143,9 +143,7 @@
     const c = colectivos[id] || {};
     const b = buses[id];
     if (!b) return '';
-    const pc = paradaCercana(c.rutaId, b);
-    if (!pc) return '';
-    return (pc.d < 3 ? 'En ' : 'Cerca de ') + pc.nombre;
+    return lugarEnRuta(b, paradasDe(c.rutaId), geoListo(c.rutaId));
   }
 
   // Punto del pasajero: su ubicación, o la parada de "Salgo desde"
@@ -202,22 +200,54 @@
     });
     return { km: aqui, lejos: lejos, total: total };
   }
-  function cajasViaje(b, g, kmh) {
+  function horaDe(t) {
+    const d = new Date(t);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  // Hora real en que inició; si difiere de la programada, muestra las dos
+  function textoSalida(b) {
+    if (!b.inicio) return (b.salida || '-') + ' hs';
+    const real = horaDe(b.inicio);
+    const p = String(b.salida || '').split(':');
+    const d = new Date(b.inicio);
+    d.setHours(Number(p[0]), Number(p[1]), 0, 0);
+    const distinta = p.length === 2 && Math.abs(d - b.inicio) > 5 * 60000;
+    return real + ' hs' + (distinta ? ' (programada ' + b.salida + ')' : '');
+  }
+  // "En X", "Cerca de X" o "Entre X y Y" según dónde está sobre la ruta
+  function lugarEnRuta(b, ps, g) {
+    let cerca = null, d = Infinity;
+    ps.forEach(function (p) {
+      const x = distanciaM([p.lat, p.lng], [b.lat, b.lng]);
+      if (x < d) { d = x; cerca = p; }
+    });
+    if (!cerca) return '';
+    if (d < 3000) return 'En ' + cerca.nombre;
+    if (d < 10000 || !g || g.length < 2) return 'Cerca de ' + cerca.nombre;
+    const aqui = enRuta(g, b, distanciaM).km;
+    for (let i = 1; i < ps.length; i++) {
+      if (enRuta(g, ps[i], distanciaM).km >= aqui) return 'Entre ' + ps[i - 1].nombre + ' y ' + ps[i].nombre;
+    }
+    return 'Cerca de ' + cerca.nombre;
+  }
+  function cajasViaje(b, g, kmh, ps) {
     const lleva = minutosEnViaje(b);
-    let falta = 'Calculando...', llega = '', avance = null;
+    const destino = ps.length ? ps[ps.length - 1].nombre : 'el destino';
+    let falta = 'Calculando...', pie = '', hecho = '', avance = null;
     if (g && g.length > 1) {
       const r = enRuta(g, b, distanciaM);
       const resto = r.total - r.km;
       avance = r.total ? Math.round(r.km / r.total * 100) : 0;
+      hecho = Math.round(r.km) + ' km de la ruta';
       if (resto < 0.3) { falta = 'Llegando'; }
       else {
         const min = resto / kmh * 60;
         falta = '~' + duracion(min);
-        llega = 'a las ' + horaEn(min);
+        pie = Math.round(resto) + ' km · llega aprox. a las ' + horaEn(min);
       }
     }
-    return '<div class="tiempos"><div><small>⏱ Lleva recorrido</small><b>' + (lleva === null ? '-' : duracion(lleva)) + '</b></div>' +
-      '<div><small>🏁 Le falta</small><b>' + falta + '</b><small>' + llega + '</small></div></div>' +
+    return '<div class="tiempos"><div><small>⏱ En viaje hace</small><b>' + (lleva === null ? '-' : duracion(lleva)) + '</b><small>' + hecho + '</small></div>' +
+      '<div><small>🏁 Para llegar a ' + esc(destino) + '</small><b>' + falta + '</b><small>' + pie + '</small></div></div>' +
       (avance === null ? '' : '<div class="barra"><i style="width:' + avance + '%"></i></div>');
   }
 
@@ -479,7 +509,7 @@
       estado = '<span class="etq">En recorrido</span> ' + esc(dondeEsta(id));
       const ref = puntoRef();
       if (ref) {
-        estado += '<br><small>A ' + km(buses[id], ref).toFixed(1) + ' km de vos';
+        estado += '<br><small>A ' + distanciaTexto(km(buses[id], ref)) + ' de vos';
         const v = viene(id);
         if (v === true) estado += ' · viene hacia vos';
         if (v === false) estado += ' · ya pasó';
@@ -495,9 +525,9 @@
       '<div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> ' +
       (masCerca ? '<span class="etq azul">⭐ Más cerca</span>' : '') +
       '<br><small>' + esc(e ? e.nombre : '') + ' · ' + esc(c.ruta) + '</small><br>' + estado + '</div>' +
-      '<button class="campana" data-aviso="' + esc(id) + '" title="Avisarme cuando salga">' +
+      '<button class="campana" data-aviso="' + esc(id) + '" title="Activar avisos">' +
       (avisos[id] ? '🔔' : '🔕') + '</button>' +
-      (conAviso && avisos[id] ? selectorAviso(id) : '') + '</div>';
+      (conAviso && avisos[id] ? (estaActivo(id) ? selectorCerca(id) : selectorAviso(id)) : '') + '</div>';
   }
 
   function selectorAviso(id) {
@@ -506,6 +536,42 @@
     return '<div class="aviso-min">🔔 Avisarme ' +
       '<select class="sel-min" data-id="' + esc(id) + '">' + op(15, '15 min') + op(30, '30 min') + op(60, '1 hora') + '</select>' +
       ' antes de salir</div>';
+  }
+
+  // Con el colectivo en camino: avisar cuando esté cerca de tu parada
+  let minCerca = cargar('minCerca');
+  let avisadosCerca = cargar('avisadosCerca');
+  function cercaMin(id) { return Number(minCerca[id]) || 10; }
+  function distanciaTexto(d) { return d < 1 ? Math.round(d * 1000) + ' m' : d.toFixed(1) + ' km'; }
+
+  function selectorCerca(id) {
+    if (!avisos[id]) {
+      return '<div class="aviso-min"><button class="sec" data-aviso="' + esc(id) + '">🔔 Avisarme cuando esté cerca</button></div>';
+    }
+    const m = cercaMin(id);
+    return '<div class="aviso-min">🔔 Avisarme cuando falten ' +
+      '<select class="sel-cerca" data-id="' + esc(id) + '">' + [5, 10, 15, 30].map(function (v) {
+        return '<option value="' + v + '"' + (m === v ? ' selected' : '') + '>' + v + ' min</option>';
+      }).join('') + '</select> para que llegue</div>';
+  }
+
+  // Aviso 3: "Se acerca tu colectivo" (una sola vez por viaje)
+  function revisarLlegadas() {
+    activos().forEach(function (id) {
+      if (!suscrito(id)) return;
+      const e = etaMin(id);
+      if (!e || e.min === undefined || e.min > cercaMin(id)) return;
+      const viaje = String(buses[id].inicio || fechaHoy() + buses[id].salida);
+      if (avisadosCerca[id] === viaje) return;
+      avisadosCerca[id] = viaje;
+      guardar('avisadosCerca', avisadosCerca);
+      notificar('🚏 Se acerca tu colectivo',
+        infoBus(id) + '\n' + (e.min < 1 ? 'Está llegando a tu parada' : 'Llega en ~' + duracion(e.min)), id);
+    });
+  }
+  function eligiendo() {
+    const a = document.activeElement;
+    return !!(a && a.classList && (a.classList.contains('sel-min') || a.classList.contains('sel-cerca')));
   }
 
   function ordenar(ids) {
@@ -523,6 +589,7 @@
   }
 
   function renderDetalle() {
+    if (eligiendo()) return;
     const box = $('detalle');
     if (!seleccionado || !colectivos[seleccionado]) { box.classList.add('oculto'); return; }
     const id = seleccionado;
@@ -537,12 +604,12 @@
       'Ruta: ' + esc(c.ruta) + '<br>';
     if (estaActivo(id)) {
       const b = buses[id];
-      h += '<span class="etq">En recorrido</span> salió ' + esc(b.salida) + ' hs<br>' +
+      h += '<span class="etq">En recorrido</span> salió ' + esc(textoSalida(b)) + '<br>' +
         '📍 Ahora: ' + esc(dondeEsta(id)) + '<br>';
-      h += cajaMiParada(id);
-      h += cajasViaje(b, geoListo(c.rutaId), velocidadUsada(id));
+      h += cajaMiParada(id) + selectorCerca(id);
+      h += cajasViaje(b, geoListo(c.rutaId), velocidadUsada(id), paradasDe(c.rutaId));
       const ref = puntoRef();
-      if (ref) { h += 'En línea recta está a ' + km(b, ref).toFixed(1) + ' km de vos<br>'; }
+      if (ref) { h += 'En línea recta está a ' + distanciaTexto(km(b, ref)) + ' de vos<br>'; }
       h += '<small id="senal"></small>';
     } else {
       h += '<span class="etq gris">No está en recorrido</span><br>' +
@@ -576,8 +643,7 @@
 
   function renderEmpresas() {
     // No redibujar mientras el pasajero está eligiendo un tiempo (se cerraría el selector)
-    const ae = document.activeElement;
-    if (ae && ae.classList && ae.classList.contains('sel-min')) return;
+    if (eligiendo()) return;
     let html = '';
     Object.keys(empresas).forEach(function (eid) {
       const ids = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; });
@@ -658,7 +724,7 @@
       }
       if (primera && centrar) { mapa.setView([miPos.lat, miPos.lng], 12); }
       $('btnUbic').textContent = '📍 Ubicación activada';
-      if (primera) { primera = false; render(); }
+      if (primera) { primera = false; render(); revisarLlegadas(); }
     }, function () {
       if (miPos) return;
       navigator.geolocation.clearWatch(seguimiento);
@@ -671,7 +737,7 @@
 
   // ----- Clics en el panel -----
   $('panel').addEventListener('click', function (e) {
-    if (e.target.closest('.aviso-min')) return;
+    if (e.target.closest('.aviso-min') && !e.target.closest('[data-aviso]')) return;
     const bell = e.target.closest('[data-aviso]');
     if (bell) { alternarAviso(bell.dataset.aviso); return; }
     if (e.target.id === 'btnMiParada') { pedirUbicacion(false); return; }
@@ -687,6 +753,19 @@
   });
 
   $('panel').addEventListener('change', function (e) {
+    const cerca = e.target.closest('.sel-cerca');
+    if (cerca) {
+      const bus = cerca.dataset.id;
+      minCerca[bus] = Number(cerca.value);
+      delete avisadosCerca[bus];
+      guardar('minCerca', minCerca);
+      mostrarToast('Te avisamos cuando falten ' + cerca.value + ' min para que llegue');
+      cerca.blur();
+      if (!miPos) { pedirUbicacion(false); }
+      revisarLlegadas();
+      render();
+      return;
+    }
     const sel = e.target.closest('.sel-min');
     if (!sel) return;
     const id = sel.dataset.id;
@@ -728,10 +807,17 @@
     } else {
       avisos[id] = true;
       pedirPermiso();
-      mostrarToast('Avisos activados para el N° ' + c.numero + '. Elegí cuánto antes querés que te avisemos.');
+      delete avisadosCerca[id];
+      if (estaActivo(id)) {
+        mostrarToast('Te avisamos cuando el N° ' + c.numero + ' esté cerca de tu parada');
+        if (!miPos) { pedirUbicacion(false); }
+      } else {
+        mostrarToast('Avisos activados para el N° ' + c.numero + '. Elegí cuánto antes querés que te avisemos.');
+      }
     }
     guardar('avisos', avisos);
     render();
+    revisarLlegadas();
   }
 
   function infoBus(id) {
@@ -832,10 +918,11 @@
     actualizarMarcadores();
     actualizarRuta();
     render();
+    revisarLlegadas();
   });
 
   setInterval(actualizarSenal, 1000);
-  setInterval(function () { revisarAvisos(); revisarSalidas(); actualizarMarcadores(); actualizarRuta(); render(); }, 30000);
+  setInterval(function () { revisarLlegadas(); revisarAvisos(); revisarSalidas(); actualizarMarcadores(); actualizarRuta(); render(); }, 30000);
 </script>
 </body>
 </html>
