@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chofer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 10px; }
+  button { font-size: 18px; padding: 10px 20px; }
+  #mapa { height: 70vh; margin-top: 10px; }
+</style>
+</head>
+<body>
+<button id="btn">Iniciar recorrido</button>
+<p id="info">Sin ubicación todavía</p>
+<div id="mapa"></div>
+
+<script>
+    const firebaseConfig = {
+  apiKey: "AIzaSyAgXGe2yG3QDv7reBa00et5nGjK7XIQaA0",
+  authDomain: "colectivos-7caae.firebaseapp.com",
+  databaseURL: "https://colectivos-7caae-default-rtdb.firebaseio.com",
+  projectId: "colectivos-7caae",
+  appId: "1:419518705953:web:6a20b7cc82f3b1e368ce60"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+  const mapa = L.map('mapa').setView([-25.7, -57.2], 10);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap'
+  }).addTo(mapa);
+
+  let watchId = null;
+  let marcador = null;
+
+  document.getElementById('btn').onclick = function () {
+    if (watchId === null) {
+      watchId = navigator.geolocation.watchPosition(mostrar, error, { enableHighAccuracy: true });
+      this.textContent = 'Terminar recorrido';
+    } else {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+      db.ref('buses/bus1').remove();
+      this.textContent = 'Iniciar recorrido';
+    }
+  };
+
+  function mostrar(pos) {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    db.ref('buses/bus1').set({ lat: lat, lng: lng, hora: Date.now() });
+    document.getElementById('info').textContent = 'Lat: ' + lat.toFixed(5) + ' | Lng: ' + lng.toFixed(5);
+    if (marcador === null) {
+      marcador = L.marker([lat, lng]).addTo(mapa);
+      mapa.setView([lat, lng], 15);
+    } else {
+      marcador.setLatLng([lat, lng]);
+    }
+  }
+
+  function error(e) {
+    document.getElementById('info').textContent = 'Error: ' + e.message;
+  }
+</script>
+</body>
+</html>
