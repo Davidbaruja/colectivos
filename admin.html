@@ -56,6 +56,20 @@
   .dias { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
   .dias label { display: flex; align-items: center; gap: 4px; margin: 0; padding: 8px 10px; background: #fff; border-radius: 8px; font-size: 15px; color: #202124; }
   .dias input { width: auto; margin: 0; }
+  .tabs { flex-wrap: wrap; }
+  .tabs button { flex: 1 1 30%; }
+  .cal-cab { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+  .cal-cab button { width: auto; padding: 8px 18px; margin: 0; }
+  .cal-cab b { font-size: 18px; text-transform: capitalize; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-grid .dow { text-align: center; font-size: 12px; color: #5f6368; padding: 2px 0; }
+  .cal-grid button.dia { background: #f1f3f4; color: #202124; padding: 4px 0; margin: 0; font-size: 15px; min-height: 52px;
+                         border-radius: 8px; border: 2px solid transparent; display: flex; flex-direction: column;
+                         align-items: center; justify-content: center; gap: 2px; }
+  .cal-grid button.dia small { font-size: 11px; color: #1a73e8; font-weight: bold; }
+  .cal-grid button.dia.hoy { border-color: #e8710a; }
+  .cal-grid button.dia.sel { background: #1a73e8; color: #fff; }
+  .cal-grid button.dia.sel small { color: #fff; }
   .oculto { display: none !important; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
            padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 92%; font-size: 15px; }
@@ -79,6 +93,7 @@
 
   <div id="tabs" class="tabs">
     <button id="tabCol" class="sel">🚌 Colectivos</button>
+    <button id="tabCal">📅 Calendario</button>
     <button id="tabRut">🗺️ Rutas</button>
     <button id="tabMapa">📍 Mapa</button>
     <button id="tabEmp">🏢 Empresas</button>
@@ -95,6 +110,13 @@
     <div id="mapaBuses"></div>
     <button id="btnVerTodos" class="sec" type="button">Ver todos en el mapa</button>
     <div id="listaVivos"></div>
+  </div>
+
+  <div id="vistaCal" class="oculto">
+    <div id="calGrid"></div>
+    <div id="calLista"></div>
+    <button id="calNuevo" type="button">+ Agregar horario este día</button>
+    <div id="calEditor"></div>
   </div>
 
   <div id="vistaRut" class="oculto">
@@ -296,6 +318,7 @@
     Object.keys(marcas).forEach(function (id) { marcas[id].remove(); delete marcas[id]; });
     empresas = {}; rutas = {}; colectivos = {}; asignaciones = {}; salidasHoy = {}; encargados = {};
     esGeneral = false; miEmpresa = null; editId = null; admEmp = null;
+    calMes = null; calDia = null; calEd = null; $('calEditor').innerHTML = '';
     $('listaCol').innerHTML = ''; $('listaEmp').innerHTML = ''; $('listaRut').innerHTML = '';
     $('app').classList.add('oculto');
     $('login').classList.remove('oculto');
@@ -304,7 +327,7 @@
 
   // ----- Pantallas -----
   function ver(v) {
-    ['vistaCol', 'vistaRut', 'vistaMapa', 'vistaEmp', 'formCol', 'formRuta', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
+    ['vistaCol', 'vistaCal', 'vistaRut', 'vistaMapa', 'vistaEmp', 'formCol', 'formRuta', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
     $('tabs').classList.toggle('oculto', v.indexOf('form') === 0);
     // La pestaña Empresas es solo para el administrador general
     $('tabEmp').classList.toggle('oculto', !esGeneral);
@@ -312,6 +335,7 @@
     $('tabCol').classList.toggle('sel', v === 'vistaCol');
     $('tabEmp').classList.toggle('sel', v === 'vistaEmp');
     $('tabMapa').classList.toggle('sel', v === 'vistaMapa');
+    $('tabCal').classList.toggle('sel', v === 'vistaCal');
     window.scrollTo(0, 0);
   }
   $('tabCol').onclick = function () { ver('vistaCol'); };
@@ -336,20 +360,25 @@
   const DIAS_LARGO = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
   const ORDEN_DIAS = [1, 2, 3, 4, 5, 6, 0];
   const TERMINALES = ['Asunción', 'Ybycuí'];
-  function vacia() { return { hora: '', terminal: '', tipo: 'todos', dias: [], fecha: '' }; }
+  function vacia() { return { hora: '', terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [] }; }
   // Cada salida: { hora, terminal, tipo: 'todos' | 'dias' | 'fecha', dias: [0-6], fecha: 'AAAA-MM-DD' }
   // Las salidas viejas (solo texto "05:20") se leen como "todos los días, sin terminal"
   function salidasLista(c) {
     return Object.values((c && c.salidas) || {}).map(function (s) {
-      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '' }; }
+      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [] }; }
       return {
         hora: s.hora || '', terminal: s.terminal || '', tipo: s.tipo || 'todos',
-        dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || ''
+        dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || '',
+        excepto: Object.values(s.excepto || {})
       };
     }).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
   }
   function fechaCorta(f) { const p = String(f).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : f; }
   function cuandoSale(s) {
+    const x = (s.excepto && s.excepto.length && s.tipo !== 'fecha') ? ' (salvo ' + s.excepto.map(fechaCorta).join(', ') + ')' : '';
+    return cuandoBase(s) + x;
+  }
+  function cuandoBase(s) {
     if (s.tipo === 'fecha') return 'solo el ' + fechaCorta(s.fecha);
     if (s.tipo === 'dias') {
       const d = ORDEN_DIAS.filter(function (x) { return s.dias.indexOf(x) >= 0; }).map(function (x) { return DIAS_LARGO[x]; });
@@ -358,6 +387,14 @@
       return d.slice(0, -1).join(', ') + ' y ' + d[d.length - 1];
     }
     return 'todos los días';
+  }
+  // Lo que se guarda en Firebase de cada salida
+  function itemSalida(s) {
+    const item = { hora: s.hora, terminal: s.terminal || '', tipo: s.tipo };
+    if (s.tipo === 'dias') { item.dias = s.dias.slice().sort(function (x, y) { return x - y; }); }
+    if (s.tipo === 'fecha') { item.fecha = s.fecha; }
+    if (s.tipo !== 'fecha' && s.excepto && s.excepto.length) { item.excepto = s.excepto.slice().sort(); }
+    return item;
   }
   function textoSalidaAdmin(s) {
     return s.hora + ' hs' + (s.terminal ? ' · desde ' + s.terminal : '') + ' · ' + cuandoSale(s);
@@ -380,6 +417,7 @@
     pintarColectivos();
     pintarRutas();
     pintarMapa(false);
+    pintarCalendario();
     if (esGeneral) { pintarEmpresas(); }
   }
 
@@ -683,9 +721,7 @@
       if (TERMINALES.indexOf(s.terminal) < 0) { aviso('Elegí la terminal de salida del horario de las ' + s.hora); return; }
       if (s.tipo === 'dias' && !s.dias.length) { aviso('Marcá al menos un día de la semana para las ' + s.hora); return; }
       if (s.tipo === 'fecha' && !s.fecha) { aviso('Elegí la fecha del horario de las ' + s.hora); return; }
-      const item = { hora: s.hora, terminal: s.terminal, tipo: s.tipo };
-      if (s.tipo === 'dias') { item.dias = s.dias.slice().sort(function (x, y) { return x - y; }); }
-      if (s.tipo === 'fecha') { item.fecha = s.fecha; }
+      const item = itemSalida(s);
       const k = [item.hora, item.terminal, item.tipo, (item.dias || []).join(','), item.fecha || ''].join('|');
       if (vistos[k]) continue;
       vistos[k] = true;
@@ -740,6 +776,170 @@
       ver('vistaCol');
     }).catch(function () { aviso('❌ No se pudo eliminar'); });
   };
+
+  // ----- Calendario mensual -----
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  let calMes = null, calDia = null, calEd = null;
+
+  function fechaISO(y, m, d) { return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'); }
+  function dowDe(f) { const p = f.split('-'); return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getDay(); }
+  // ¿Esta salida corresponde a ese día? (respeta los días que se quitaron)
+  function aplicaDia(s, f) {
+    if ((s.excepto || []).indexOf(f) >= 0) return false;
+    if (s.tipo === 'fecha') return s.fecha === f;
+    if (s.tipo === 'dias') return s.dias.indexOf(dowDe(f)) >= 0;
+    return true;
+  }
+  function salidasDelDia(f) {
+    const out = [];
+    misColectivos().forEach(function (id) {
+      salidasLista(colectivos[id]).forEach(function (s, i) { if (aplicaDia(s, f)) { out.push({ id: id, i: i, s: s }); } });
+    });
+    return out.sort(function (x, y) {
+      return x.s.hora < y.s.hora ? -1 : (x.s.hora > y.s.hora ? 1 : (colectivos[x.id].numero || 0) - (colectivos[y.id].numero || 0));
+    });
+  }
+
+  function pintarCalendario() {
+    if ($('vistaCal').classList.contains('oculto')) return;
+    if (!calMes) { const n = new Date(); calMes = { y: n.getFullYear(), m: n.getMonth() }; calDia = fechaHoy(); }
+    const y = calMes.y, m = calMes.m, hoy = fechaHoy();
+    const vacios = (new Date(y, m, 1).getDay() + 6) % 7;   // la semana empieza en lunes
+    const dias = new Date(y, m + 1, 0).getDate();
+    const listas = misColectivos().map(function (id) { return salidasLista(colectivos[id]); });
+
+    let h = '<div class="cal-cab"><button type="button" class="sec" data-mes="-1" aria-label="Mes anterior">‹</button>' +
+      '<b>' + MESES[m] + ' ' + y + '</b>' +
+      '<button type="button" class="sec" data-mes="1" aria-label="Mes siguiente">›</button></div><div class="cal-grid">';
+    ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].forEach(function (d) { h += '<div class="dow">' + d + '</div>'; });
+    for (let i = 0; i < vacios; i++) { h += '<div></div>'; }
+    for (let d = 1; d <= dias; d++) {
+      const f = fechaISO(y, m, d);
+      let n = 0;
+      listas.forEach(function (l) { l.forEach(function (s) { if (aplicaDia(s, f)) { n++; } }); });
+      h += '<button type="button" class="dia' + (f === hoy ? ' hoy' : '') + (f === calDia ? ' sel' : '') + '" data-dia="' + f + '">' +
+        d + (n ? '<small>' + n + '</small>' : '') + '</button>';
+    }
+    $('calGrid').innerHTML = h + '</div>';
+
+    const items = salidasDelDia(calDia);
+    $('calLista').innerHTML = '<h3>Salidas del ' + esc(DIAS_LARGO[dowDe(calDia)] + ' ' + fechaCorta(calDia)) + '</h3>' +
+      (items.map(function (x) {
+        const c = colectivos[x.id];
+        const a = ' data-id="' + esc(x.id) + '" data-i="' + x.i + '"';
+        return '<div class="tarjeta"><div class="txt"><b>' + esc(x.s.hora) + ' hs</b> · 🚌 N° ' + esc(c.numero) +
+          '<br><small>' + esc(x.s.terminal ? 'Desde ' + x.s.terminal : 'Sin terminal') + ' · ' + esc(cuandoSale(x.s)) + '</small></div>' +
+          '<div class="acciones"><button type="button" class="chico" data-acc="cambiar"' + a + '>Cambiar</button>' +
+          '<button type="button" class="chico sec" data-acc="quitar"' + a + '>Quitar este día</button>' +
+          (x.s.tipo !== 'fecha' ? '<button type="button" class="chico rojo" data-acc="borrar"' + a + '>Eliminar siempre</button>' : '') +
+          '</div></div>';
+      }).join('') || '<p class="vacio">No hay salidas este día.</p>');
+  }
+
+  $('tabCal').onclick = function () { ver('vistaCal'); cerrarEditorCal(); pintarCalendario(); };
+
+  $('calGrid').addEventListener('click', function (e) {
+    const mes = e.target.closest('[data-mes]');
+    if (mes) {
+      calMes.m += Number(mes.dataset.mes);
+      if (calMes.m < 0) { calMes.m = 11; calMes.y--; }
+      if (calMes.m > 11) { calMes.m = 0; calMes.y++; }
+      const n = new Date();
+      calDia = (calMes.y === n.getFullYear() && calMes.m === n.getMonth()) ? fechaHoy() : fechaISO(calMes.y, calMes.m, 1);
+      cerrarEditorCal(); pintarCalendario();
+      return;
+    }
+    const d = e.target.closest('[data-dia]');
+    if (d) { calDia = d.dataset.dia; cerrarEditorCal(); pintarCalendario(); }
+  });
+
+  // Guarda la lista completa de salidas de un colectivo
+  function guardarSalidas(id, lista, msg) {
+    const datos = lista.map(itemSalida).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
+    return db.ref('colectivos/' + id + '/salidas').set(datos.length ? datos : null).then(function () {
+      aviso(msg); return true;
+    }).catch(function () {
+      aviso('❌ No se pudo guardar. Revisá las reglas de Firebase'); return false;
+    });
+  }
+
+  $('calLista').addEventListener('click', function (e) {
+    const b = e.target.closest('[data-acc]');
+    if (!b || !colectivos[b.dataset.id]) return;
+    const id = b.dataset.id, i = Number(b.dataset.i), acc = b.dataset.acc;
+    if (acc === 'cambiar') { abrirEditorCal('cambiar', id, i); return; }
+    const lista = salidasLista(colectivos[id]), s = lista[i];
+    if (!s) return;
+    if (acc === 'quitar') {
+      if (!confirm('¿Quitar la salida de las ' + s.hora + ' solo del ' + fechaCorta(calDia) + '?')) return;
+      if (s.tipo === 'fecha') { lista.splice(i, 1); } else { s.excepto.push(calDia); }
+      guardarSalidas(id, lista, '✅ Salida quitada de ese día');
+    } else if (acc === 'borrar') {
+      if (!confirm('¿Eliminar la salida de las ' + s.hora + ' de todos los días? (' + cuandoSale(s) + ')')) return;
+      lista.splice(i, 1);
+      guardarSalidas(id, lista, '✅ Horario eliminado');
+    }
+  });
+
+  $('calNuevo').onclick = function () {
+    if (!misColectivos().length) { aviso('Primero cargá un colectivo'); return; }
+    abrirEditorCal('nuevo', null, null);
+  };
+
+  function cerrarEditorCal() { calEd = null; $('calEditor').innerHTML = ''; }
+
+  function abrirEditorCal(modo, id, i) {
+    calEd = { modo: modo, id: id, i: i };
+    let s = vacia(), titulo = 'Agregar horario el ' + fechaCorta(calDia);
+    if (modo === 'cambiar') {
+      s = salidasLista(colectivos[id])[i];
+      if (!s) return;
+      titulo = 'Cambiar la salida de las ' + s.hora + ' del N° ' + colectivos[id].numero;
+    }
+    const op = function (v, t, sel) { return '<option value="' + esc(v) + '"' + (sel === v ? ' selected' : '') + '>' + esc(t) + '</option>'; };
+    const buses = misColectivos().sort(function (x, y) { return (colectivos[x].numero || 0) - (colectivos[y].numero || 0); });
+    $('calEditor').innerHTML = '<div class="salida"><b>' + esc(titulo) + '</b>' +
+      (modo === 'nuevo'
+        ? '<label>Colectivo</label><select id="cBus">' + op('', 'Elegí el colectivo', '') + buses.map(function (b) {
+            const c = colectivos[b];
+            return op(b, 'N° ' + c.numero + ' · ' + (c.chapa || '') + (esGeneral && empresas[c.empresa] ? ' · ' + empresas[c.empresa].nombre : ''), '');
+          }).join('') + '</select>' : '') +
+      '<label>Hora de salida</label><input id="cHora" type="time" value="' + esc(s.hora) + '">' +
+      '<label>Terminal de salida</label><select id="cTerm">' + op('', 'Elegí la terminal', s.terminal) +
+        TERMINALES.map(function (t) { return op(t, t, s.terminal); }).join('') + '</select>' +
+      ((modo === 'cambiar' && s.tipo !== 'fecha')
+        ? '<label>Aplicar el cambio</label><select id="cAlcance">' +
+          op('dia', 'Solo el ' + fechaCorta(calDia), 'dia') +
+          op('todas', 'En todas las salidas (' + cuandoSale(s) + ')', 'dia') + '</select>' : '') +
+      '<button id="calGuardar" type="button">Guardar</button>' +
+      '<button id="calCancelar" type="button" class="sec">Cancelar</button></div>';
+    $('calEditor').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  $('calEditor').addEventListener('click', function (e) {
+    if (e.target.id === 'calCancelar') { cerrarEditorCal(); return; }
+    if (e.target.id !== 'calGuardar' || !calEd) return;
+    const id = calEd.modo === 'nuevo' ? $('cBus').value : calEd.id;
+    const hora = $('cHora').value, term = $('cTerm').value;
+    if (!id || !colectivos[id]) { aviso('Elegí el colectivo'); return; }
+    if (!hora) { aviso('Elegí la hora de salida'); return; }
+    if (TERMINALES.indexOf(term) < 0) { aviso('Elegí la terminal de salida'); return; }
+    const lista = salidasLista(colectivos[id]);
+    const nueva = { hora: hora, terminal: term, tipo: 'fecha', dias: [], fecha: calDia, excepto: [] };
+    if (calEd.modo === 'nuevo') {
+      lista.push(nueva);
+    } else {
+      const s = lista[calEd.i];
+      if (!s) { aviso('Ese horario ya no existe'); cerrarEditorCal(); return; }
+      const alcance = $('cAlcance') ? $('cAlcance').value : 'todas';
+      if (s.tipo === 'fecha' || alcance === 'todas') { s.hora = hora; s.terminal = term; }
+      else { s.excepto.push(calDia); lista.push(nueva); }   // solo ese día: se saca de la serie y se crea uno suelto
+    }
+    $('calGuardar').disabled = true;
+    guardarSalidas(id, lista, '✅ Horario guardado').then(function (ok) {
+      if (ok) { cerrarEditorCal(); } else if ($('calGuardar')) { $('calGuardar').disabled = false; }
+    });
+  });
 
   // ----- Rutas -----
   let rutaId = null, paradasForm = [], volverACol = false;

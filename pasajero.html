@@ -267,20 +267,26 @@
   // Las salidas viejas (solo texto "05:20") se leen como "todos los días, sin terminal"
   function normSalidas(c) {
     return Object.values((c && c.salidas) || {}).map(function (s) {
-      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '' }; }
+      if (typeof s === 'string') { return { hora: s, terminal: '', tipo: 'todos', dias: [], fecha: '', excepto: [] }; }
       return {
         hora: s.hora || '', terminal: s.terminal || '', tipo: s.tipo || 'todos',
-        dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || ''
+        dias: Object.values(s.dias || {}).map(Number), fecha: s.fecha || '',
+        excepto: Object.values(s.excepto || {})
       };
     }).sort(function (x, y) { return x.hora < y.hora ? -1 : (x.hora > y.hora ? 1 : 0); });
   }
   function aplicaEn(s, d) {
+    if ((s.excepto || []).indexOf(fechaDe(d)) >= 0) return false;
     if (s.tipo === 'fecha') return s.fecha === fechaDe(d);
     if (s.tipo === 'dias') return s.dias.indexOf(d.getDay()) >= 0;
     return true;
   }
   function fechaCorta(f) { const q = String(f).split('-'); return q.length === 3 ? q[2] + '/' + q[1] + '/' + q[0] : f; }
   function cuandoSale(s) {
+    const x = (s.excepto && s.excepto.length && s.tipo !== 'fecha') ? ' (salvo ' + s.excepto.map(fechaCorta).join(', ') + ')' : '';
+    return cuandoBase(s) + x;
+  }
+  function cuandoBase(s) {
     if (s.tipo === 'fecha') return 'solo el ' + fechaCorta(s.fecha);
     if (s.tipo === 'dias') {
       const d = ORDEN_DIAS.filter(function (x) { return s.dias.indexOf(x) >= 0; }).map(function (x) { return DIAS_LARGO[x]; });
