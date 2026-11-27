@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administración de colectivos</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 0; padding: 12px; max-width: 680px; margin-inline: auto; color: #202124; }
+  h2 { font-size: 20px; margin: 0; }
+  h3 { font-size: 15px; color: #5f6368; margin: 18px 0 6px; }
+  label { display: block; font-size: 14px; color: #5f6368; margin-top: 10px; }
+  input, select, button { font-size: 17px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; width: 100%; margin: 4px 0; background: #fff; }
+  button { background: #1a73e8; color: #fff; border: 0; cursor: pointer; }
+  button.sec { background: #f1f3f4; color: #202124; }
+  button.rojo { background: #d93025; }
+  button.chico { width: auto; padding: 8px 12px; font-size: 15px; margin: 0; }
+  button:disabled { opacity: .5; }
+  .cab { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tabs button { background: #f1f3f4; color: #202124; }
+  .tabs button.sel { background: #1a73e8; color: #fff; }
+  .fila { display: flex; gap: 6px; align-items: center; }
+  .fila input { flex: 1; width: auto; }
+  .tarjeta { display: flex; align-items: center; gap: 8px; background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 6px 0; }
+  .tarjeta .txt { flex: 1; line-height: 1.45; }
+  .acciones { display: flex; flex-direction: column; gap: 6px; }
+  .ayuda { font-size: 13px; color: #5f6368; margin: 2px 0 0; line-height: 1.4; }
+  .vacio { color: #5f6368; font-size: 15px; }
+  #error { color: #d93025; }
+  .oculto { display: none !important; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
+           padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 92%; font-size: 15px; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h2>Ingreso de administrador</h2>
+  <input id="usuario" placeholder="Usuario" autocapitalize="none" autocorrect="off">
+  <input id="clave" type="password" placeholder="Contraseña">
+  <button id="btnLogin">Ingresar</button>
+  <p id="error"></p>
+</div>
+
+<div id="app" class="oculto">
+  <div class="cab">
+    <h2>⚙️ Administración</h2>
+    <button id="btnSalir" class="sec chico">Salir</button>
+  </div>
+
+  <div id="tabs" class="tabs">
+    <button id="tabCol" class="sel">🚌 Colectivos</button>
+    <button id="tabEmp">🏢 Empresas</button>
+  </div>
+
+  <div id="vistaCol">
+    <button id="btnNuevoCol">+ Nuevo colectivo</button>
+    <div id="listaCol"></div>
+  </div>
+
+  <div id="vistaEmp" class="oculto">
+    <div class="fila">
+      <input id="nuevaEmp" placeholder="Nombre de la empresa">
+      <button id="btnAddEmp" class="chico">Agregar</button>
+    </div>
+    <div id="listaEmp"></div>
+  </div>
+
+  <div id="formCol" class="oculto">
+    <h2 id="tituloForm">Nuevo colectivo</h2>
+
+    <label for="fEmp">Empresa</label>
+    <select id="fEmp"></select>
+
+    <label for="fNum">Número del colectivo</label>
+    <input id="fNum" type="number" inputmode="numeric" placeholder="Ej: 12">
+
+    <label for="fChapa">Chapa</label>
+    <input id="fChapa" placeholder="Ej: ABC 123" autocapitalize="characters">
+
+    <label for="fAnio">Año</label>
+    <input id="fAnio" type="number" inputmode="numeric" placeholder="Ej: 2018">
+
+    <label for="fRuta">Ruta</label>
+    <select id="fRuta"></select>
+
+    <label for="fChofer">Conductor</label>
+    <input id="fChofer" placeholder="Nombre del conductor">
+
+    <label for="fGuarda">Guarda</label>
+    <input id="fGuarda" placeholder="Nombre del guarda">
+
+    <label>Horarios de salida</label>
+    <div id="fSalidas"></div>
+    <button id="btnAddSalida" class="sec" type="button">+ Agregar horario</button>
+
+    <label for="fUsuario">Usuario con el que el chofer ingresa</label>
+    <input id="fUsuario" placeholder="Ej: juanperez" autocapitalize="none" autocorrect="off">
+    <label for="fClave">Contraseña</label>
+    <input id="fClave" type="text" placeholder="Solo para crear la cuenta" autocapitalize="none" autocorrect="off">
+    <p class="ayuda">Para crear una cuenta nueva, escribí usuario y contraseña (mínimo 6 caracteres). Si la cuenta ya existe, dejá la contraseña vacía: solo se asigna a este colectivo.</p>
+
+    <button id="btnGuardar">Guardar</button>
+    <button id="btnCancelar" class="sec">Cancelar</button>
+    <button id="btnEliminar" class="rojo oculto">Eliminar colectivo</button>
+  </div>
+</div>
+
+<div id="toast" class="oculto"></div>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAgXGe2yG3QDv7reBa0Oet5nGjK7XIQaA0",
+    authDomain: "colectivos-7caae.firebaseapp.com",
+    databaseURL: "https://colectivos-7caae-default-rtdb.firebaseio.com",
+    projectId: "colectivos-7caae",
+    appId: "1:419518705953:web:6a20b7cc82f3b1e368ce60"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const auth = firebase.auth();
+  // Segunda conexión, solo para crear cuentas de choferes sin cerrar la sesión del administrador
+  const auth2 = firebase.initializeApp(firebaseConfig, 'secundaria').auth();
+
+  const $ = function (id) { return document.getElementById(id); };
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function norm(t) {
+    return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  }
+
+  let empresas = {}, rutas = {}, colectivos = {}, asignaciones = {};
+  let refs = [];
+  let editId = null, salidasForm = [];
+
+  let toastTimer = null;
+  function aviso(t) {
+    const el = $('toast');
+    el.textContent = t;
+    el.classList.remove('oculto');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.add('oculto'); }, 5000);
+  }
+
+  // ----- Inicio de sesión -----
+  $('btnLogin').onclick = function () {
+    const u = $('usuario').value.trim().toLowerCase();
+    const c = $('clave').value;
+    $('error').textContent = '';
+    if (!u || !c) { $('error').textContent = 'Completá usuario y contraseña'; return; }
+    auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function (e) {
+      if (e.code === 'auth/network-request-failed') {
+        $('error').textContent = 'Sin conexión a internet. Revisá tu señal e intentá de nuevo';
+      } else if (e.code === 'auth/too-many-requests') {
+        $('error').textContent = 'Demasiados intentos. Esperá unos minutos';
+      } else {
+        $('error').textContent = 'Usuario o contraseña incorrectos';
+      }
+    });
+  };
+
+  auth.onAuthStateChanged(function (user) {
+    if (!user) { mostrarLogin(); return; }
+    // Solo entra quien figura como administrador en la base de datos
+    db.ref('admins/' + user.uid).once('value').then(function (s) {
+      if (!s.val()) { throw new Error('Esta cuenta no tiene permiso de administrador'); }
+      mostrarApp();
+    }).catch(function (e) {
+      $('error').textContent = (e.message && e.message.indexOf('permiso de administrador') >= 0)
+        ? e.message : 'No se pudo verificar el permiso de administrador';
+      auth.signOut();
+    });
+  });
+
+  $('btnSalir').onclick = function () { auth.signOut(); };
+
+  function escuchar(ruta, fn) {
+    const r = db.ref(ruta);
+    r.on('value', fn, function () { aviso('No se pudo leer "' + ruta + '". Revisá las reglas de Firebase'); });
+    refs.push(r);
+  }
+  function dejarDeEscuchar() { refs.forEach(function (r) { r.off(); }); refs = []; }
+
+  function mostrarApp() {
+    $('login').classList.add('oculto');
+    $('app').classList.remove('oculto');
+    $('error').textContent = '';
+    dejarDeEscuchar();
+    escuchar('empresas', function (s) { empresas = s.val() || {}; pintar(); });
+    escuchar('rutas', function (s) { rutas = s.val() || {}; pintar(); });
+    escuchar('colectivos', function (s) { colectivos = s.val() || {}; pintar(); });
+    escuchar('asignaciones', function (s) { asignaciones = s.val() || {}; pintar(); });
+    ver('vistaCol');
+  }
+
+  function mostrarLogin() {
+    dejarDeEscuchar();
+    $('app').classList.add('oculto');
+    $('login').classList.remove('oculto');
+    $('clave').value = '';
+  }
+
+  // ----- Pantallas -----
+  function ver(v) {
+    ['vistaCol', 'vistaEmp', 'formCol'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
+    $('tabs').classList.toggle('oculto', v === 'formCol');
+    $('tabCol').classList.toggle('sel', v === 'vistaCol');
+    $('tabEmp').classList.toggle('sel', v === 'vistaEmp');
+    window.scrollTo(0, 0);
+  }
+  $('tabCol').onclick = function () { ver('vistaCol'); };
+  $('tabEmp').onclick = function () { ver('vistaEmp'); };
+
+  function usuarioDe(busId) {
+    return Object.keys(asignaciones).filter(function (u) { return asignaciones[u] === busId; })[0] || '';
+  }
+  function salidasLista(c) { return Object.values((c && c.salidas) || {}).slice().sort(); }
+  function etiquetaRuta(rid) {
+    const r = rutas[rid];
+    if (!r) return rid;
+    if (r.nombre) return r.nombre;
+    const ps = r.paradas ? Object.values(r.paradas) : [];
+    return ps.length ? ps[0].nombre + ' - ' + ps[ps.length - 1].nombre : rid;
+  }
+
+  function pintar() { pintarColectivos(); pintarEmpresas(); }
+
+  function pintarColectivos() {
+    const ids = Object.keys(colectivos);
+    if (!ids.length) { $('listaCol').innerHTML = '<p class="vacio">Todavía no hay colectivos. Tocá "+ Nuevo colectivo" para cargar el primero.</p>'; return; }
+    const grupos = {};
+    ids.forEach(function (id) { const e = colectivos[id].empresa || ''; (grupos[e] = grupos[e] || []).push(id); });
+    let html = '';
+    Object.keys(grupos).forEach(function (eid) {
+      html += '<h3>' + esc(empresas[eid] ? empresas[eid].nombre : 'Sin empresa') + '</h3>';
+      grupos[eid].sort(function (a, b) { return (colectivos[a].numero || 0) - (colectivos[b].numero || 0); }).forEach(function (id) {
+        const c = colectivos[id];
+        html += '<div class="tarjeta"><div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> · ' + esc(c.chapa) +
+          '<br><small>' + esc(c.ruta) + '</small>' +
+          '<br><small>Conductor: ' + esc(c.chofer || '-') + ' · Guarda: ' + esc(c.guarda || '-') + '</small>' +
+          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + ' · Salidas: ' + esc(salidasLista(c).join(', ') || '-') + '</small></div>' +
+          '<button class="chico" data-editar="' + esc(id) + '">Editar</button></div>';
+      });
+    });
+    $('listaCol').innerHTML = html;
+  }
+
+  function pintarEmpresas() {
+    const eids = Object.keys(empresas);
+    if (!eids.length) { $('listaEmp').innerHTML = '<p class="vacio">Todavía no hay empresas. Escribí un nombre arriba y tocá Agregar.</p>'; return; }
+    $('listaEmp').innerHTML = eids.map(function (eid) {
+      const n = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; }).length;
+      return '<div class="tarjeta"><div class="txt"><b>🏢 ' + esc(empresas[eid].nombre) + '</b><br><small>' + n + (n === 1 ? ' colectivo' : ' colectivos') + '</small></div>' +
+        '<div class="acciones"><button class="chico sec" data-renombrar="' + esc(eid) + '">Renombrar</button>' +
+        '<button class="chico rojo" data-borrar-emp="' + esc(eid) + '">Eliminar</button></div></div>';
+    }).join('');
+  }
+
+  // ----- Empresas -----
+  $('btnAddEmp').onclick = function () {
+    const nombre = $('nuevaEmp').value.trim();
+    if (!nombre) { aviso('Escribí el nombre de la empresa'); return; }
+    const dup = Object.keys(empresas).some(function (e) { return norm(empresas[e].nombre) === norm(nombre); });
+    if (dup) { aviso('Ya existe una empresa con ese nombre'); return; }
+    let base = 'emp-' + (norm(nombre).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'nueva'), id = base, n = 2;
+    while (empresas[id]) { id = base + '-' + n; n++; }
+    db.ref('empresas/' + id).set({ nombre: nombre }).then(function () {
+      $('nuevaEmp').value = '';
+      aviso('✅ Empresa agregada');
+    }).catch(function () { aviso('❌ No se pudo agregar la empresa'); });
+  };
+
+  $('listaEmp').addEventListener('click', function (e) {
+    const ren = e.target.closest('[data-renombrar]');
+    if (ren) {
+      const eid = ren.dataset.renombrar;
+      const nuevo = prompt('Nuevo nombre de la empresa', empresas[eid].nombre);
+      if (nuevo && nuevo.trim()) {
+        db.ref('empresas/' + eid + '/nombre').set(nuevo.trim()).then(function () { aviso('✅ Empresa renombrada'); })
+          .catch(function () { aviso('❌ No se pudo renombrar'); });
+      }
+      return;
+    }
+    const del = e.target.closest('[data-borrar-emp]');
+    if (del) {
+      const eid = del.dataset.borrarEmp;
+      const n = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; }).length;
+      if (n) { aviso('No se puede eliminar: tiene ' + n + ' colectivo(s). Eliminá o cambiá esos colectivos primero'); return; }
+      if (!confirm('¿Eliminar la empresa "' + empresas[eid].nombre + '"?')) return;
+      db.ref('empresas/' + eid).remove().then(function () { aviso('✅ Empresa eliminada'); })
+        .catch(function () { aviso('❌ No se pudo eliminar'); });
+    }
+  });
+
+  // ----- Formulario de colectivo -----
+  $('btnNuevoCol').onclick = function () { abrirForm(null); };
+  $('listaCol').addEventListener('click', function (e) {
+    const b = e.target.closest('[data-editar]');
+    if (b) abrirForm(b.dataset.editar);
+  });
+  $('btnCancelar').onclick = function () { ver('vistaCol'); };
+
+  function abrirForm(id) {
+    if (!Object.keys(empresas).length) { aviso('Primero agregá una empresa en la pestaña Empresas'); ver('vistaEmp'); return; }
+    if (!Object.keys(rutas).length) { aviso('No hay rutas cargadas en la base de datos'); return; }
+    editId = id;
+    const c = id ? colectivos[id] : {};
+    $('tituloForm').textContent = id ? 'Editar colectivo N° ' + c.numero : 'Nuevo colectivo';
+    $('fEmp').innerHTML = '<option value="">Elegí la empresa</option>' + Object.keys(empresas).map(function (eid) {
+      return '<option value="' + esc(eid) + '">' + esc(empresas[eid].nombre) + '</option>';
+    }).join('');
+    $('fRuta').innerHTML = '<option value="">Elegí la ruta</option>' + Object.keys(rutas).map(function (rid) {
+      return '<option value="' + esc(rid) + '">' + esc(etiquetaRuta(rid)) + '</option>';
+    }).join('');
+    $('fEmp').value = c.empresa || '';
+    $('fRuta').value = c.rutaId || '';
+    $('fNum').value = c.numero == null ? '' : c.numero;
+    $('fChapa').value = c.chapa || '';
+    $('fAnio').value = c.anio == null ? '' : c.anio;
+    $('fChofer').value = c.chofer || '';
+    $('fGuarda').value = c.guarda || '';
+    $('fUsuario').value = id ? usuarioDe(id) : '';
+    $('fClave').value = '';
+    salidasForm = salidasLista(c);
+    pintarSalidas();
+    $('btnEliminar').classList.toggle('oculto', !id);
+    ver('formCol');
+  }
+
+  function pintarSalidas() {
+    $('fSalidas').innerHTML = salidasForm.map(function (h, i) {
+      return '<div class="fila"><input type="time" value="' + esc(h) + '" data-i="' + i + '">' +
+        '<button type="button" class="rojo chico" data-quitar="' + i + '">✕</button></div>';
+    }).join('') || '<p class="vacio">Sin horarios cargados.</p>';
+  }
+  $('btnAddSalida').onclick = function () { salidasForm.push(''); pintarSalidas(); };
+  $('fSalidas').addEventListener('input', function (e) {
+    if (e.target.dataset.i != null) { salidasForm[Number(e.target.dataset.i)] = e.target.value; }
+  });
+  $('fSalidas').addEventListener('click', function (e) {
+    const q = e.target.closest('[data-quitar]');
+    if (q) { salidasForm.splice(Number(q.dataset.quitar), 1); pintarSalidas(); }
+  });
+
+  function nuevoId(numero, emp) {
+    const base = 'bus' + numero;
+    return colectivos[base] ? base + '_' + emp : base;
+  }
+
+  function crearCuenta(u, clave) {
+    return auth2.createUserWithEmailAndPassword(u + '@colectivos.app', clave).then(function () {
+      return auth2.signOut().then(function () { return 'cuenta creada'; });
+    }).catch(function (e) {
+      if (e.code === 'auth/email-already-in-use') return 'la cuenta ya existía, su contraseña no cambió';
+      if (e.code === 'auth/weak-password') throw new Error('La contraseña debe tener al menos 6 caracteres');
+      if (e.code === 'auth/network-request-failed') throw new Error('Sin conexión a internet');
+      throw new Error('No se pudo crear la cuenta del chofer');
+    });
+  }
+
+  $('btnGuardar').onclick = function () {
+    const emp = $('fEmp').value, rid = $('fRuta').value;
+    const numero = Number($('fNum').value);
+    const usuario = $('fUsuario').value.trim().toLowerCase();
+    const clave = $('fClave').value;
+    if (!emp) { aviso('Elegí la empresa'); return; }
+    if (!numero) { aviso('Escribí el número del colectivo'); return; }
+    if (!rid) { aviso('Elegí la ruta'); return; }
+    const duplicado = Object.keys(colectivos).some(function (id) {
+      return id !== editId && colectivos[id].empresa === emp && Number(colectivos[id].numero) === numero;
+    });
+    if (duplicado) { aviso('Esa empresa ya tiene un colectivo con el N° ' + numero); return; }
+    if (usuario && !/^[a-z0-9_-]+$/.test(usuario)) {
+      aviso('El usuario solo puede tener letras sin tilde, números, guion y guion bajo'); return;
+    }
+    if (usuario && asignaciones[usuario] && asignaciones[usuario] !== editId) {
+      const o = colectivos[asignaciones[usuario]];
+      aviso('Ese usuario ya está asignado al colectivo N° ' + (o ? o.numero : '?')); return;
+    }
+
+    const horas = [];
+    salidasForm.forEach(function (h) { if (h && horas.indexOf(h) < 0) horas.push(h); });
+    horas.sort();
+
+    const id = editId || nuevoId(numero, emp);
+    const viejo = editId ? usuarioDe(editId) : '';
+    const anterior = editId ? colectivos[editId] : {};
+    const base = 'colectivos/' + id + '/';
+    const up = {};
+    up[base + 'empresa'] = emp;
+    up[base + 'numero'] = numero;
+    up[base + 'chapa'] = $('fChapa').value.trim();
+    up[base + 'anio'] = $('fAnio').value ? Number($('fAnio').value) : null;
+    up[base + 'rutaId'] = rid;
+    up[base + 'ruta'] = (anterior.rutaId === rid && anterior.ruta) ? anterior.ruta : etiquetaRuta(rid);
+    up[base + 'chofer'] = $('fChofer').value.trim();
+    up[base + 'guarda'] = $('fGuarda').value.trim();
+    up[base + 'salidas'] = horas.length ? horas : null;
+    if (usuario) { up['asignaciones/' + usuario] = id; }
+    if (viejo && viejo !== usuario) { up['asignaciones/' + viejo] = null; }
+
+    $('btnGuardar').disabled = true;
+    let nota = '';
+    const paso = (usuario && clave)
+      ? crearCuenta(usuario, clave).then(function (r) { nota = ' (' + r + ')'; })
+      : Promise.resolve();
+    paso.then(function () { return db.ref().update(up); }).then(function () {
+      aviso('✅ Colectivo guardado' + nota);
+      ver('vistaCol');
+    }).catch(function (e) {
+      aviso('❌ ' + (e.message && e.message.indexOf('PERMISSION') < 0 ? e.message : 'No se pudo guardar. Revisá las reglas de Firebase'));
+    }).finally(function () { $('btnGuardar').disabled = false; });
+  };
+
+  $('btnEliminar').onclick = function () {
+    if (!editId) return;
+    const c = colectivos[editId] || {};
+    if (!confirm('¿Eliminar el colectivo N° ' + c.numero + '? No se puede deshacer.')) return;
+    const u = usuarioDe(editId);
+    const up = {};
+    up['colectivos/' + editId] = null;
+    up['buses/' + editId] = null;
+    up['salidasHoy/' + editId] = null;
+    if (u) { up['asignaciones/' + u] = null; }
+    db.ref().update(up).then(function () {
+      aviso('✅ Colectivo eliminado');
+      ver('vistaCol');
+    }).catch(function () { aviso('❌ No se pudo eliminar'); });
+  };
+</script>
+</body>
+</html>
