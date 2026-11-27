@@ -201,9 +201,6 @@
     <label>Horarios de salida</label>
     <div id="fSalidas"></div>
     <button id="btnAddSalida" class="sec" type="button">+ Agregar horario</button>
-    <label style="display:flex;align-items:center;gap:8px;color:#202124;">
-      <input id="fFijo" type="checkbox" style="width:auto;margin:0;"> 📌 Horario fijo
-    </label>
 
     <label for="fUsuario">Usuario con el que el chofer ingresa</label>
     <input id="fUsuario" placeholder="Ej: juanperez" autocapitalize="none" autocorrect="off">
@@ -623,7 +620,8 @@
     $('fUsuario').value = id ? usuarioDe(id) : '';
     $('fClave').value = '';
     salidasForm = salidasLista(c);
-    $('fFijo').checked = !!c.horarioFijo;
+    // Los colectivos viejos con "horario fijo" general pasan a tener cada horario marcado como fijo
+    if (c.horarioFijo) { salidasForm.forEach(function (s) { s.fijo = true; }); }
     pintarSalidas();
     $('btnEliminar').classList.toggle('oculto', !id);
     ver('formCol');
@@ -762,7 +760,7 @@
     up[base + 'chofer'] = $('fChofer').value.trim();
     up[base + 'guarda'] = $('fGuarda').value.trim();
     up[base + 'salidas'] = horas.length ? horas : null;
-    up[base + 'horarioFijo'] = $('fFijo').checked ? true : null;
+    up[base + 'horarioFijo'] = null;
     if (usuario) { up['asignaciones/' + usuario] = id; }
     if (viejo && viejo !== usuario) { up['asignaciones/' + viejo] = null; }
 
@@ -1007,7 +1005,7 @@
   let mapa = null, capa = null;
 
   function paradasDe(rid) { const r = rutas[rid]; return r && r.paradas ? Object.values(r.paradas) : []; }
-  function puedeEditar(rid) { return true; }
+  function puedeEditar(rid) { return esGeneral || (rutas[rid] && rutas[rid].empresa === miEmpresa); }
   function usanRuta(rid) {
     return Object.keys(colectivos).filter(function (id) { return colectivos[id].rutaId === rid; });
   }
