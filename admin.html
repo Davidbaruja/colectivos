@@ -41,6 +41,7 @@
   #mapaBuses { height: 55vh; border-radius: 10px; margin: 6px 0; }
   #infoBus { background: #fef7e0; border: 2px solid #e8710a; border-radius: 12px; padding: 12px; margin: 6px 0; line-height: 1.5; }
   .vivo { cursor: pointer; }
+  #cerrarBus { float: right; width: auto; background: #e8710a; padding: 4px 12px; margin: 0 0 4px 8px; }
   .num-bus { background: #1a73e8; color: #fff; border: 2px solid #fff; border-radius: 14px; font-weight: bold; font-size: 14px;
              text-align: center; line-height: 24px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
   .num-bus.sel { background: #e8710a; }
@@ -873,7 +874,7 @@
 
     if (busSel) {
       const c = colectivos[busSel], b = buses[busSel], e = empresas[c.empresa];
-      $('infoBus').innerHTML = '<b>🚌 Colectivo N° ' + esc(c.numero) + '</b><br>' +
+      $('infoBus').innerHTML = '<button type="button" id="cerrarBus" aria-label="Cerrar">✕</button><b>🚌 Colectivo N° ' + esc(c.numero) + '</b><br>' +
         (esGeneral ? 'Empresa: ' + esc(e ? e.nombre : '-') + '<br>' : '') +
         'Chapa: ' + esc(c.chapa || '-') + ' · Año: ' + esc(c.anio || '-') + '<br>' +
         'Conductor: ' + esc(c.chofer || '-') + '<br>' +
@@ -909,6 +910,10 @@
     busSel = null;
     pintarMapa(true);
   };
+  // La ✕ quita la selección y vuelve a mostrar todos
+  $('infoBus').addEventListener('click', function (e) {
+    if (e.target.closest('#cerrarBus')) { busSel = null; pintarMapa(true); }
+  });
   $('btnVerTodos').onclick = function () { busSel = null; pintarMapa(true); };
   $('listaVivos').addEventListener('click', function (e) {
     const f = e.target.closest('[data-vivo]');
