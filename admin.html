@@ -37,6 +37,13 @@
   #error { color: #d93025; }
   #mapaRuta { height: 45vh; border-radius: 10px; margin: 6px 0; }
   .parada span { flex: 1; }
+  .tabs button { font-size: 14px; padding: 10px 2px; }
+  #mapaBuses { height: 55vh; border-radius: 10px; margin: 6px 0; }
+  #infoBus { background: #fef7e0; border: 2px solid #e8710a; border-radius: 12px; padding: 12px; margin: 6px 0; line-height: 1.5; }
+  .vivo { cursor: pointer; }
+  .num-bus { background: #1a73e8; color: #fff; border: 2px solid #fff; border-radius: 14px; font-weight: bold; font-size: 14px;
+             text-align: center; line-height: 24px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .num-bus.sel { background: #e8710a; }
   .oculto { display: none !important; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
            padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 92%; font-size: 15px; }
@@ -61,12 +68,21 @@
   <div id="tabs" class="tabs">
     <button id="tabCol" class="sel">🚌 Colectivos</button>
     <button id="tabRut">🗺️ Rutas</button>
+    <button id="tabMapa">📍 Mapa</button>
     <button id="tabEmp">🏢 Empresas</button>
   </div>
 
   <div id="vistaCol">
     <button id="btnNuevoCol">+ Nuevo colectivo</button>
     <div id="listaCol"></div>
+  </div>
+
+  <div id="vistaMapa" class="oculto">
+    <h3 id="cuentaMapa"></h3>
+    <div id="infoBus" class="oculto"></div>
+    <div id="mapaBuses"></div>
+    <button id="btnVerTodos" class="sec" type="button">Ver todos en el mapa</button>
+    <div id="listaVivos"></div>
   </div>
 
   <div id="vistaRut" class="oculto">
@@ -253,6 +269,7 @@
     escuchar('rutas', function (s) { rutas = s.val() || {}; pintar(); });
     escuchar('colectivos', function (s) { colectivos = s.val() || {}; pintar(); });
     escuchar('asignaciones', function (s) { asignaciones = s.val() || {}; pintar(); });
+    escuchar('buses', function (s) { buses = s.val() || {}; pintarMapa(false); });
     escuchar('salidasHoy', function (s) { salidasHoy = s.val() || {}; pintar(); });
     if (esGeneral) { escuchar('encargados', function (s) { encargados = s.val() || {}; pintar(); }); }
     ver('vistaCol');
@@ -260,6 +277,8 @@
 
   function mostrarLogin() {
     dejarDeEscuchar();
+    buses = {}; busSel = null; encuadrado = false;
+    Object.keys(marcas).forEach(function (id) { marcas[id].remove(); delete marcas[id]; });
     empresas = {}; rutas = {}; colectivos = {}; asignaciones = {}; salidasHoy = {}; encargados = {};
     esGeneral = false; miEmpresa = null; editId = null; admEmp = null;
     $('listaCol').innerHTML = ''; $('listaEmp').innerHTML = ''; $('listaRut').innerHTML = '';
@@ -270,13 +289,14 @@
 
   // ----- Pantallas -----
   function ver(v) {
-    ['vistaCol', 'vistaRut', 'vistaEmp', 'formCol', 'formRuta', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
+    ['vistaCol', 'vistaRut', 'vistaMapa', 'vistaEmp', 'formCol', 'formRuta', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
     $('tabs').classList.toggle('oculto', v.indexOf('form') === 0);
     // La pestaña Empresas es solo para el administrador general
     $('tabEmp').classList.toggle('oculto', !esGeneral);
     $('tabRut').classList.toggle('sel', v === 'vistaRut');
     $('tabCol').classList.toggle('sel', v === 'vistaCol');
     $('tabEmp').classList.toggle('sel', v === 'vistaEmp');
+    $('tabMapa').classList.toggle('sel', v === 'vistaMapa');
     window.scrollTo(0, 0);
   }
   $('tabCol').onclick = function () { ver('vistaCol'); };
@@ -315,6 +335,7 @@
       : (empresas[miEmpresa] ? empresas[miEmpresa].nombre : 'Administración'));
     pintarColectivos();
     pintarRutas();
+    pintarMapa(false);
     if (esGeneral) { pintarEmpresas(); }
   }
 
@@ -792,6 +813,109 @@
     }).catch(function () { aviso('❌ No se pudo guardar la ruta. Revisá las reglas de Firebase'); })
       .finally(function () { $('btnGuardarRuta').disabled = false; });
   };
+
+  // ----- Mapa en vivo (solo los colectivos que esta cuenta administra) -----
+  let buses = {}, busSel = null, mapaVivo = null, encuadrado = false;
+  const marcas = {};
+  const MAX_SIN_SENAL = 10 * 60 * 1000; // igual que en la página del pasajero
+
+  function enRecorrido() {
+    return misColectivos().filter(function (id) {
+      const b = buses[id];
+      return !!(b && Date.now() - b.hora < MAX_SIN_SENAL);
+    }).sort(function (a, b) { return (colectivos[a].numero || 0) - (colectivos[b].numero || 0); });
+  }
+
+  function cercaDe(id) {
+    const b = buses[id];
+    let mejor = null, dist = Infinity;
+    paradasDe(colectivos[id].rutaId).forEach(function (p) {
+      const d = mapaVivo ? mapaVivo.distance([p.lat, p.lng], [b.lat, b.lng]) : Infinity;
+      if (d < dist) { dist = d; mejor = p; }
+    });
+    return mejor ? (dist < 3000 ? 'En ' : 'Cerca de ') + mejor.nombre : '';
+  }
+
+  function hace(t) {
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 60 ? s + ' segundos' : Math.floor(s / 60) + ' min';
+  }
+
+  function encuadrar(ids) {
+    if (!mapaVivo || !ids.length) return;
+    mapaVivo.fitBounds(ids.map(function (id) { return [buses[id].lat, buses[id].lng]; }), { maxZoom: 14, padding: [40, 40] });
+    encuadrado = true;
+  }
+
+  function pintarMapa(centrar) {
+    if ($('vistaMapa').classList.contains('oculto') || !mapaVivo) return;
+    const ids = enRecorrido();
+    if (ids.indexOf(busSel) < 0) { busSel = null; }
+    Object.keys(marcas).forEach(function (id) {
+      if (ids.indexOf(id) < 0) { marcas[id].remove(); delete marcas[id]; }
+    });
+    ids.forEach(function (id) {
+      const b = buses[id];
+      const icono = L.divIcon({
+        className: '', iconSize: [48, 28], iconAnchor: [24, 14],
+        html: '<div class="num-bus' + (id === busSel ? ' sel' : '') + '">🚌 ' + esc(colectivos[id].numero) + '</div>'
+      });
+      if (!marcas[id]) {
+        marcas[id] = L.marker([b.lat, b.lng], { icon: icono }).addTo(mapaVivo);
+        marcas[id].on('click', function () { elegirBus(id); });
+      } else {
+        marcas[id].setLatLng([b.lat, b.lng]);
+        marcas[id].setIcon(icono);
+      }
+    });
+    if (centrar || !encuadrado) { encuadrar(ids); }
+    $('cuentaMapa').textContent = ids.length + ' de ' + misColectivos().length + ' en recorrido';
+
+    if (busSel) {
+      const c = colectivos[busSel], b = buses[busSel], e = empresas[c.empresa];
+      $('infoBus').innerHTML = '<b>🚌 Colectivo N° ' + esc(c.numero) + '</b><br>' +
+        (esGeneral ? 'Empresa: ' + esc(e ? e.nombre : '-') + '<br>' : '') +
+        'Chapa: ' + esc(c.chapa || '-') + ' · Año: ' + esc(c.anio || '-') + '<br>' +
+        'Conductor: ' + esc(c.chofer || '-') + '<br>' +
+        'Guarda: ' + esc(c.guarda || '-') + '<br>' +
+        'Ruta: ' + esc(c.ruta || '-') + '<br>' +
+        'Salida: ' + esc(b.salida || '-') + ' hs<br>' +
+        '📍 ' + esc(cercaDe(busSel) || 'En recorrido') + '<br>' +
+        '<small>Última señal hace ' + hace(b.hora) + '</small>';
+    }
+    $('infoBus').classList.toggle('oculto', !busSel);
+
+    $('listaVivos').innerHTML = ids.map(function (id) {
+      return '<div class="tarjeta vivo" data-vivo="' + esc(id) + '"><div class="txt"><b>🚌 N° ' + esc(colectivos[id].numero) + '</b> · ' +
+        esc(colectivos[id].ruta) + '<br><small>' + esc(cercaDe(id)) + '</small></div></div>';
+    }).join('') || '<p class="vacio">Ningún colectivo está en recorrido ahora.</p>';
+  }
+
+  function elegirBus(id) {
+    busSel = id;
+    pintarMapa(false);
+    mapaVivo.setView([buses[id].lat, buses[id].lng], 14);
+    window.scrollTo(0, 0);
+  }
+
+  $('tabMapa').onclick = function () {
+    ver('vistaMapa');
+    if (!window.L) { $('cuentaMapa').textContent = 'No se pudo cargar el mapa. Recargá la página'; return; }
+    if (!mapaVivo) {
+      mapaVivo = L.map('mapaBuses').setView([-25.7, -57.2], 9);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapaVivo);
+    }
+    mapaVivo.invalidateSize();
+    busSel = null;
+    pintarMapa(true);
+  };
+  $('btnVerTodos').onclick = function () { busSel = null; pintarMapa(true); };
+  $('listaVivos').addEventListener('click', function (e) {
+    const f = e.target.closest('[data-vivo]');
+    if (f) { elegirBus(f.dataset.vivo); }
+  });
+  // Actualiza la antigüedad de la señal y quita los que dejaron de transmitir
+  setInterval(function () { pintarMapa(false); }, 5000);
 </script>
 </body>
 </html>
