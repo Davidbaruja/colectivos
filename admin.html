@@ -18,8 +18,8 @@
   button.sec { background: #f1f3f4; color: #202124; }
   button.rojo { background: #d93025; }
   button.chico { width: auto; padding: 8px 12px; font-size: 15px; margin: 0; }
-  button:disabled { opacity: .5; }
-  .cab { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  button:disabled, select:disabled { opacity: .6; }
+  .cab { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
   .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
   .tabs button { background: #f1f3f4; color: #202124; }
   .tabs button.sel { background: #1a73e8; color: #fff; }
@@ -28,6 +28,8 @@
   .tarjeta { display: flex; align-items: center; gap: 8px; background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 6px 0; }
   .tarjeta .txt { flex: 1; line-height: 1.45; }
   .acciones { display: flex; flex-direction: column; gap: 6px; }
+  .hoy { margin-top: 6px; font-size: 14px; background: #fef7e0; border-radius: 8px; padding: 6px 8px; }
+  .encargado { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 14px; }
   .ayuda { font-size: 13px; color: #5f6368; margin: 2px 0 0; line-height: 1.4; }
   .vacio { color: #5f6368; font-size: 15px; }
   #error { color: #d93025; }
@@ -48,7 +50,7 @@
 
 <div id="app" class="oculto">
   <div class="cab">
-    <h2>⚙️ Administración</h2>
+    <h2 id="titulo">⚙️ Administración</h2>
     <button id="btnSalir" class="sec chico">Salir</button>
   </div>
 
@@ -68,6 +70,17 @@
       <button id="btnAddEmp" class="chico">Agregar</button>
     </div>
     <div id="listaEmp"></div>
+  </div>
+
+  <div id="formAdm" class="oculto">
+    <h2 id="tituloAdm">Nuevo administrador</h2>
+    <label for="aUsuario">Usuario</label>
+    <input id="aUsuario" placeholder="Ej: admin_empresaa" autocapitalize="none" autocorrect="off">
+    <label for="aClave">Contraseña</label>
+    <input id="aClave" type="text" placeholder="Mínimo 6 caracteres" autocapitalize="none" autocorrect="off">
+    <p class="ayuda">Si la cuenta ya existe, escribí su contraseña actual.</p>
+    <button id="btnGuardarAdm">Crear administrador</button>
+    <button id="btnCancelarAdm" class="sec">Cancelar</button>
   </div>
 
   <div id="formCol" class="oculto">
@@ -123,7 +136,7 @@
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
   const auth = firebase.auth();
-  // Segunda conexión, solo para crear cuentas de choferes sin cerrar la sesión del administrador
+  // Segunda conexión, solo para crear cuentas sin cerrar la sesión del administrador
   const auth2 = firebase.initializeApp(firebaseConfig, 'secundaria').auth();
 
   const $ = function (id) { return document.getElementById(id); };
@@ -136,9 +149,11 @@
     return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   }
 
-  let empresas = {}, rutas = {}, colectivos = {}, asignaciones = {};
+  let empresas = {}, rutas = {}, colectivos = {}, asignaciones = {}, salidasHoy = {}, encargados = {};
   let refs = [];
-  let editId = null, salidasForm = [];
+  let editId = null, salidasForm = [], admEmp = null;
+  let esGeneral = false;   // administrador general: ve y edita todo
+  let miEmpresa = null;    // administrador de empresa: solo la suya
 
   let toastTimer = null;
   function aviso(t) {
@@ -168,10 +183,15 @@
 
   auth.onAuthStateChanged(function (user) {
     if (!user) { mostrarLogin(); return; }
-    // Solo entra quien figura como administrador en la base de datos
+    // En admins: true = administrador general; "emp-..." = administrador de esa empresa
     db.ref('admins/' + user.uid).once('value').then(function (s) {
-      if (!s.val()) { throw new Error('Esta cuenta no tiene permiso de administrador'); }
-      mostrarApp();
+      const v = s.val();
+      if (v === true) { esGeneral = true; miEmpresa = null; mostrarApp(); return; }
+      if (typeof v !== 'string') { throw new Error('Esta cuenta no tiene permiso de administrador'); }
+      return db.ref('empresas/' + v).once('value').then(function (e) {
+        if (!e.exists()) { throw new Error('Esta cuenta no tiene permiso de administrador'); }
+        esGeneral = false; miEmpresa = v; mostrarApp();
+      });
     }).catch(function (e) {
       $('error').textContent = (e.message && e.message.indexOf('permiso de administrador') >= 0)
         ? e.message : 'No se pudo verificar el permiso de administrador';
@@ -197,11 +217,16 @@
     escuchar('rutas', function (s) { rutas = s.val() || {}; pintar(); });
     escuchar('colectivos', function (s) { colectivos = s.val() || {}; pintar(); });
     escuchar('asignaciones', function (s) { asignaciones = s.val() || {}; pintar(); });
+    escuchar('salidasHoy', function (s) { salidasHoy = s.val() || {}; pintar(); });
+    if (esGeneral) { escuchar('encargados', function (s) { encargados = s.val() || {}; pintar(); }); }
     ver('vistaCol');
   }
 
   function mostrarLogin() {
     dejarDeEscuchar();
+    empresas = {}; rutas = {}; colectivos = {}; asignaciones = {}; salidasHoy = {}; encargados = {};
+    esGeneral = false; miEmpresa = null; editId = null; admEmp = null;
+    $('listaCol').innerHTML = ''; $('listaEmp').innerHTML = '';
     $('app').classList.add('oculto');
     $('login').classList.remove('oculto');
     $('clave').value = '';
@@ -209,8 +234,9 @@
 
   // ----- Pantallas -----
   function ver(v) {
-    ['vistaCol', 'vistaEmp', 'formCol'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
-    $('tabs').classList.toggle('oculto', v === 'formCol');
+    ['vistaCol', 'vistaEmp', 'formCol', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
+    // La pestaña Empresas es solo para el administrador general
+    $('tabs').classList.toggle('oculto', !esGeneral || v === 'formCol' || v === 'formAdm');
     $('tabCol').classList.toggle('sel', v === 'vistaCol');
     $('tabEmp').classList.toggle('sel', v === 'vistaEmp');
     window.scrollTo(0, 0);
@@ -218,10 +244,25 @@
   $('tabCol').onclick = function () { ver('vistaCol'); };
   $('tabEmp').onclick = function () { ver('vistaEmp'); };
 
+  // Empresas y colectivos que esta cuenta puede administrar
+  function misEmpresas() {
+    return Object.keys(empresas).filter(function (e) { return esGeneral || e === miEmpresa; });
+  }
+  function misColectivos() {
+    return Object.keys(colectivos).filter(function (id) { return esGeneral || colectivos[id].empresa === miEmpresa; });
+  }
+  function cantidadDe(eid) {
+    return Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; }).length;
+  }
+
   function usuarioDe(busId) {
     return Object.keys(asignaciones).filter(function (u) { return asignaciones[u] === busId; })[0] || '';
   }
   function salidasLista(c) { return Object.values((c && c.salidas) || {}).slice().sort(); }
+  function fechaHoy() {
+    const n = new Date();
+    return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
+  }
   function etiquetaRuta(rid) {
     const r = rutas[rid];
     if (!r) return rid;
@@ -230,10 +271,15 @@
     return ps.length ? ps[0].nombre + ' - ' + ps[ps.length - 1].nombre : rid;
   }
 
-  function pintar() { pintarColectivos(); pintarEmpresas(); }
+  function pintar() {
+    $('titulo').textContent = '⚙️ ' + (esGeneral ? 'Administración general'
+      : (empresas[miEmpresa] ? empresas[miEmpresa].nombre : 'Administración'));
+    pintarColectivos();
+    if (esGeneral) { pintarEmpresas(); }
+  }
 
   function pintarColectivos() {
-    const ids = Object.keys(colectivos);
+    const ids = misColectivos();
     if (!ids.length) { $('listaCol').innerHTML = '<p class="vacio">Todavía no hay colectivos. Tocá "+ Nuevo colectivo" para cargar el primero.</p>'; return; }
     const grupos = {};
     ids.forEach(function (id) { const e = colectivos[id].empresa || ''; (grupos[e] = grupos[e] || []).push(id); });
@@ -242,10 +288,15 @@
       html += '<h3>' + esc(empresas[eid] ? empresas[eid].nombre : 'Sin empresa') + '</h3>';
       grupos[eid].sort(function (a, b) { return (colectivos[a].numero || 0) - (colectivos[b].numero || 0); }).forEach(function (id) {
         const c = colectivos[id];
+        const o = salidasHoy[id];
+        const cambio = (o && o.fecha === fechaHoy())
+          ? '<div class="hoy">🕒 Cambio para hoy: <b>' + esc(o.hora) + ' hs</b> ' +
+            '<button class="chico sec" data-quitar-hoy="' + esc(id) + '">Quitar</button></div>' : '';
         html += '<div class="tarjeta"><div class="txt"><b>🚌 N° ' + esc(c.numero) + '</b> · ' + esc(c.chapa) +
           '<br><small>' + esc(c.ruta) + '</small>' +
           '<br><small>Conductor: ' + esc(c.chofer || '-') + ' · Guarda: ' + esc(c.guarda || '-') + '</small>' +
-          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + ' · Salidas: ' + esc(salidasLista(c).join(', ') || '-') + '</small></div>' +
+          '<br><small>Usuario: ' + esc(usuarioDe(id) || 'sin usuario') + ' · Salidas: ' + esc(salidasLista(c).join(', ') || '-') + '</small>' +
+          cambio + '</div>' +
           '<button class="chico" data-editar="' + esc(id) + '">Editar</button></div>';
       });
     });
@@ -256,14 +307,20 @@
     const eids = Object.keys(empresas);
     if (!eids.length) { $('listaEmp').innerHTML = '<p class="vacio">Todavía no hay empresas. Escribí un nombre arriba y tocá Agregar.</p>'; return; }
     $('listaEmp').innerHTML = eids.map(function (eid) {
-      const n = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; }).length;
-      return '<div class="tarjeta"><div class="txt"><b>🏢 ' + esc(empresas[eid].nombre) + '</b><br><small>' + n + (n === 1 ? ' colectivo' : ' colectivos') + '</small></div>' +
+      const n = cantidadDe(eid);
+      const lista = encargados[eid] || {};
+      const admins = Object.keys(lista).map(function (uid) {
+        return '<div class="encargado"><span>👤 ' + esc(lista[uid]) + '</span>' +
+          '<button class="chico sec" data-quitar-adm="' + esc(uid) + '" data-emp="' + esc(eid) + '">Quitar acceso</button></div>';
+      }).join('') || '<div class="ayuda">Sin administrador propio</div>';
+      return '<div class="tarjeta"><div class="txt"><b>🏢 ' + esc(empresas[eid].nombre) + '</b><br><small>' + n + (n === 1 ? ' colectivo' : ' colectivos') + '</small>' +
+        admins + '<button class="chico" data-nuevo-adm="' + esc(eid) + '">+ Administrador</button></div>' +
         '<div class="acciones"><button class="chico sec" data-renombrar="' + esc(eid) + '">Renombrar</button>' +
         '<button class="chico rojo" data-borrar-emp="' + esc(eid) + '">Eliminar</button></div></div>';
     }).join('');
   }
 
-  // ----- Empresas -----
+  // ----- Empresas (solo administrador general) -----
   $('btnAddEmp').onclick = function () {
     const nombre = $('nuevaEmp').value.trim();
     if (!nombre) { aviso('Escribí el nombre de la empresa'); return; }
@@ -288,38 +345,114 @@
       }
       return;
     }
+    const nuevoAdm = e.target.closest('[data-nuevo-adm]');
+    if (nuevoAdm) {
+      admEmp = nuevoAdm.dataset.nuevoAdm;
+      $('tituloAdm').textContent = 'Administrador de ' + empresas[admEmp].nombre;
+      $('aUsuario').value = ''; $('aClave').value = '';
+      ver('formAdm');
+      return;
+    }
+    const quitar = e.target.closest('[data-quitar-adm]');
+    if (quitar) {
+      const uid = quitar.dataset.quitarAdm, eid = quitar.dataset.emp;
+      if (!confirm('¿Quitar el acceso de "' + encargados[eid][uid] + '"?')) return;
+      const up = {};
+      up['admins/' + uid] = null;
+      up['encargados/' + eid + '/' + uid] = null;
+      db.ref().update(up).then(function () { aviso('✅ Acceso quitado'); })
+        .catch(function () { aviso('❌ No se pudo quitar el acceso'); });
+      return;
+    }
     const del = e.target.closest('[data-borrar-emp]');
     if (del) {
       const eid = del.dataset.borrarEmp;
-      const n = Object.keys(colectivos).filter(function (id) { return colectivos[id].empresa === eid; }).length;
+      const n = cantidadDe(eid);
       if (n) { aviso('No se puede eliminar: tiene ' + n + ' colectivo(s). Eliminá o cambiá esos colectivos primero'); return; }
-      if (!confirm('¿Eliminar la empresa "' + empresas[eid].nombre + '"?')) return;
-      db.ref('empresas/' + eid).remove().then(function () { aviso('✅ Empresa eliminada'); })
+      if (!confirm('¿Eliminar la empresa "' + empresas[eid].nombre + '"? Sus administradores pierden el acceso.')) return;
+      const up = {};
+      up['empresas/' + eid] = null;
+      Object.keys(encargados[eid] || {}).forEach(function (uid) {
+        up['admins/' + uid] = null;
+        up['encargados/' + eid + '/' + uid] = null;
+      });
+      db.ref().update(up).then(function () { aviso('✅ Empresa eliminada'); })
         .catch(function () { aviso('❌ No se pudo eliminar'); });
     }
   });
 
+  // ----- Administradores de empresa -----
+  $('btnCancelarAdm').onclick = function () { ver('vistaEmp'); };
+
+  // Crea la cuenta (o entra a la existente) para conocer su UID
+  function uidDeCuenta(u, clave) {
+    const correo = u + '@colectivos.app';
+    return auth2.createUserWithEmailAndPassword(correo, clave).catch(function (e) {
+      if (e.code === 'auth/email-already-in-use') return auth2.signInWithEmailAndPassword(correo, clave);
+      throw e;
+    }).then(function (r) {
+      const uid = r.user.uid;
+      return auth2.signOut().then(function () { return uid; });
+    });
+  }
+
+  $('btnGuardarAdm').onclick = function () {
+    const u = $('aUsuario').value.trim().toLowerCase();
+    const clave = $('aClave').value;
+    const eid = admEmp;
+    if (!/^[a-z0-9_-]+$/.test(u)) { aviso('El usuario solo puede tener letras sin tilde, números, guion y guion bajo'); return; }
+    if (clave.length < 6) { aviso('La contraseña debe tener al menos 6 caracteres'); return; }
+    if (asignaciones[u]) { aviso('Ese usuario es de un chofer. Elegí otro'); return; }
+    const otra = Object.keys(encargados).filter(function (x) { return Object.values(encargados[x]).indexOf(u) >= 0; })[0];
+    if (otra) { aviso('Ese usuario ya administra ' + (empresas[otra] ? empresas[otra].nombre : 'otra empresa')); return; }
+
+    $('btnGuardarAdm').disabled = true;
+    uidDeCuenta(u, clave).then(function (uid) {
+      const up = {};
+      up['admins/' + uid] = eid;
+      up['encargados/' + eid + '/' + uid] = u;
+      return db.ref().update(up);
+    }).then(function () {
+      aviso('✅ Administrador creado');
+      ver('vistaEmp');
+    }).catch(function (e) {
+      if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-login-credentials') {
+        aviso('❌ Esa cuenta ya existe y la contraseña no coincide');
+      } else {
+        aviso('❌ No se pudo crear el administrador');
+      }
+    }).finally(function () { $('btnGuardarAdm').disabled = false; });
+  };
+
   // ----- Formulario de colectivo -----
   $('btnNuevoCol').onclick = function () { abrirForm(null); };
   $('listaCol').addEventListener('click', function (e) {
+    const q = e.target.closest('[data-quitar-hoy]');
+    if (q) {
+      if (!confirm('¿Quitar el cambio de hoy? Vuelve el horario normal.')) return;
+      db.ref('salidasHoy/' + q.dataset.quitarHoy).remove().then(function () { aviso('✅ Cambio quitado'); })
+        .catch(function () { aviso('❌ No se pudo quitar'); });
+      return;
+    }
     const b = e.target.closest('[data-editar]');
     if (b) abrirForm(b.dataset.editar);
   });
   $('btnCancelar').onclick = function () { ver('vistaCol'); };
 
   function abrirForm(id) {
-    if (!Object.keys(empresas).length) { aviso('Primero agregá una empresa en la pestaña Empresas'); ver('vistaEmp'); return; }
+    if (!misEmpresas().length) { aviso('Primero agregá una empresa en la pestaña Empresas'); ver('vistaEmp'); return; }
     if (!Object.keys(rutas).length) { aviso('No hay rutas cargadas en la base de datos'); return; }
     editId = id;
     const c = id ? colectivos[id] : {};
     $('tituloForm').textContent = id ? 'Editar colectivo N° ' + c.numero : 'Nuevo colectivo';
-    $('fEmp').innerHTML = '<option value="">Elegí la empresa</option>' + Object.keys(empresas).map(function (eid) {
+    $('fEmp').innerHTML = (esGeneral ? '<option value="">Elegí la empresa</option>' : '') + misEmpresas().map(function (eid) {
       return '<option value="' + esc(eid) + '">' + esc(empresas[eid].nombre) + '</option>';
     }).join('');
     $('fRuta').innerHTML = '<option value="">Elegí la ruta</option>' + Object.keys(rutas).map(function (rid) {
       return '<option value="' + esc(rid) + '">' + esc(etiquetaRuta(rid)) + '</option>';
     }).join('');
-    $('fEmp').value = c.empresa || '';
+    $('fEmp').value = esGeneral ? (c.empresa || '') : miEmpresa;
+    $('fEmp').disabled = !esGeneral;
     $('fRuta').value = c.rutaId || '';
     $('fNum').value = c.numero == null ? '' : c.numero;
     $('fChapa').value = c.chapa || '';
@@ -349,9 +482,12 @@
     if (q) { salidasForm.splice(Number(q.dataset.quitar), 1); pintarSalidas(); }
   });
 
+  // Nunca repite un identificador, para no pisar otro colectivo
   function nuevoId(numero, emp) {
-    const base = 'bus' + numero;
-    return colectivos[base] ? base + '_' + emp : base;
+    let id = 'bus' + numero, n = 2;
+    if (colectivos[id]) { id = 'bus' + numero + '_' + emp; }
+    while (colectivos[id]) { id = 'bus' + numero + '_' + emp + '_' + n; n++; }
+    return id;
   }
 
   function crearCuenta(u, clave) {
@@ -366,7 +502,7 @@
   }
 
   $('btnGuardar').onclick = function () {
-    const emp = $('fEmp').value, rid = $('fRuta').value;
+    const emp = esGeneral ? $('fEmp').value : miEmpresa, rid = $('fRuta').value;
     const numero = Number($('fNum').value);
     const usuario = $('fUsuario').value.trim().toLowerCase();
     const clave = $('fClave').value;
@@ -380,9 +516,9 @@
     if (usuario && !/^[a-z0-9_-]+$/.test(usuario)) {
       aviso('El usuario solo puede tener letras sin tilde, números, guion y guion bajo'); return;
     }
-    if (usuario && asignaciones[usuario] && asignaciones[usuario] !== editId) {
-      const o = colectivos[asignaciones[usuario]];
-      aviso('Ese usuario ya está asignado al colectivo N° ' + (o ? o.numero : '?')); return;
+    const otroBus = usuario ? asignaciones[usuario] : null;
+    if (otroBus && otroBus !== editId && colectivos[otroBus]) {
+      aviso('Ese usuario ya está asignado a otro colectivo'); return;
     }
 
     const horas = [];
@@ -423,12 +559,13 @@
     if (!editId) return;
     const c = colectivos[editId] || {};
     if (!confirm('¿Eliminar el colectivo N° ' + c.numero + '? No se puede deshacer.')) return;
-    const u = usuarioDe(editId);
     const up = {};
     up['colectivos/' + editId] = null;
     up['buses/' + editId] = null;
     up['salidasHoy/' + editId] = null;
-    if (u) { up['asignaciones/' + u] = null; }
+    Object.keys(asignaciones).forEach(function (u) {
+      if (asignaciones[u] === editId) { up['asignaciones/' + u] = null; }
+    });
     db.ref().update(up).then(function () {
       aviso('✅ Colectivo eliminado');
       ver('vistaCol');
