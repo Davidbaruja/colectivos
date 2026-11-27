@@ -8,54 +8,157 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
-  body { font-family: sans-serif; margin: 10px; }
-  button { font-size: 18px; padding: 10px 20px; }
-  #mapa { height: 70vh; margin-top: 10px; }
+  body { font-family: sans-serif; margin: 10px; max-width: 600px; }
+  input, button { font-size: 18px; padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; }
+  button { background: #1a73e8; color: #fff; border: 0; border-radius: 8px; }
+  button.rojo { background: #d93025; }
+  #tarjeta { background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 10px 0; }
+  #tarjeta p { margin: 4px 0; }
+  #mapa { height: 40vh; margin-top: 10px; }
+  .oculto { display: none; }
+  #error { color: #d93025; }
 </style>
 </head>
 <body>
-<button id="btn">Iniciar recorrido</button>
-<p id="info">Sin ubicación todavía</p>
-<div id="mapa"></div>
+
+<div id="login">
+  <h3>Ingreso de chofer</h3>
+  <input id="usuario" placeholder="Usuario" autocapitalize="none" autocorrect="off">
+  <input id="clave" type="password" placeholder="Contraseña">
+  <button id="btnLogin">Ingresar</button>
+  <p id="error"></p>
+</div>
+
+<div id="panel" class="oculto">
+  <div id="tarjeta"></div>
+  <label for="hora">Hora de salida</label>
+  <input id="hora" type="time">
+  <button id="btn">Iniciar recorrido</button>
+  <p id="info"></p>
+  <div id="mapa"></div>
+  <button id="btnSalir" class="rojo">Cerrar sesión</button>
+</div>
 
 <script>
-    const firebaseConfig = {
-  apiKey: "AIzaSyAgXGe2yG3QDv7reBa00et5nGjK7XIQaA0",
-  authDomain: "colectivos-7caae.firebaseapp.com",
-  databaseURL: "https://colectivos-7caae-default-rtdb.firebaseio.com",
-  projectId: "colectivos-7caae",
-  appId: "1:419518705953:web:6a20b7cc82f3b1e368ce60"
-};
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+  const firebaseConfig = {
+    apiKey: "AIzaSyAgXGe2yG3QDv7reBa00et5nGjK7XIQaA0",
+    authDomain: "colectivos-7caae.firebaseapp.com",
+    databaseURL: "https://colectivos-7caae-default-rtdb.firebaseio.com",
+    projectId: "colectivos-7caae",
+    appId: "1:419518705953:web:6a20b7cc82f3b1e368ce60"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const auth = firebase.auth();
+
+  const $ = function (id) { return document.getElementById(id); };
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
 
   const mapa = L.map('mapa').setView([-25.7, -57.2], 10);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(mapa);
 
-  let watchId = null;
-  let marcador = null;
+  let busId = null, datosBus = null, watchId = null, marcador = null;
 
-  document.getElementById('btn').onclick = function () {
+  // ----- Inicio de sesión -----
+  $('btnLogin').onclick = function () {
+    const u = $('usuario').value.trim().toLowerCase();
+    const c = $('clave').value;
+    $('error').textContent = '';
+    if (!u || !c) { $('error').textContent = 'Completá usuario y contraseña'; return; }
+    auth.signInWithEmailAndPassword(u + '@colectivos.app', c).catch(function () {
+      $('error').textContent = 'Usuario o contraseña incorrectos';
+    });
+  };
+
+  auth.onAuthStateChanged(function (user) {
+    if (!user) { mostrarLogin(); return; }
+    const usuario = user.email.split('@')[0];
+    db.ref('asignaciones/' + usuario).once('value').then(function (s) {
+      busId = s.val();
+      if (!busId) { throw new Error('Tu usuario no tiene un colectivo asignado'); }
+      return db.ref('colectivos/' + busId).once('value');
+    }).then(function (s) {
+      datosBus = s.val();
+      if (!datosBus) { throw new Error('No se encontraron los datos del colectivo'); }
+      mostrarPanel();
+    }).catch(function (e) {
+      $('error').textContent = e.message;
+      auth.signOut();
+    });
+  });
+
+  function mostrarPanel() {
+    $('login').classList.add('oculto');
+    $('panel').classList.remove('oculto');
+    $('tarjeta').innerHTML =
+      '<p><b>Colectivo N° ' + esc(datosBus.numero) + '</b></p>' +
+      '<p>Chapa: ' + esc(datosBus.chapa) + ' · Año: ' + esc(datosBus.anio) + '</p>' +
+      '<p>Conductor: ' + esc(datosBus.chofer) + '</p>' +
+      '<p>Guarda: ' + esc(datosBus.guarda) + '</p>' +
+      '<p>Ruta: ' + esc(datosBus.ruta) + '</p>';
+    mapa.invalidateSize();
+  }
+
+  function mostrarLogin() {
+    detener(false);
+    busId = null; datosBus = null;
+    $('panel').classList.add('oculto');
+    $('login').classList.remove('oculto');
+    $('clave').value = '';
+  }
+
+  $('btnSalir').onclick = function () {
+    detener(true).finally(function () { auth.signOut(); });
+  };
+
+  // ----- Recorrido -----
+  $('btn').onclick = function () {
     if (watchId === null) {
+      if (!$('hora').value) { $('info').textContent = 'Elegí la hora de salida primero'; return; }
+      $('info').textContent = 'Buscando ubicación...';
       watchId = navigator.geolocation.watchPosition(mostrar, error, { enableHighAccuracy: true });
       this.textContent = 'Terminar recorrido';
+      this.classList.add('rojo');
+      $('hora').disabled = true;
     } else {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-      db.ref('buses/bus1').remove();
-      this.textContent = 'Iniciar recorrido';
+      detener(true);
     }
   };
+
+  function detener(borrar) {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (marcador) { mapa.removeLayer(marcador); marcador = null; }
+    $('btn').textContent = 'Iniciar recorrido';
+    $('btn').classList.remove('rojo');
+    $('hora').disabled = false;
+    $('info').textContent = '';
+    if (borrar && busId) { return db.ref('buses/' + busId).remove(); }
+    return Promise.resolve();
+  }
 
   function mostrar(pos) {
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
-    db.ref('buses/bus1').set({ lat: lat, lng: lng, hora: Date.now() });
-    document.getElementById('info').textContent = 'Lat: ' + lat.toFixed(5) + ' | Lng: ' + lng.toFixed(5);
-    if (marcador === null) {
+    $('info').textContent = 'Transmitiendo · Lat: ' + lat.toFixed(5) + ' | Lng: ' + lng.toFixed(5);
+    db.ref('buses/' + busId).set({
+      lat: lat, lng: lng, hora: Date.now(),
+      salida: $('hora').value,
+      numero: datosBus.numero || '',
+      chapa: datosBus.chapa || '',
+      anio: datosBus.anio || '',
+      chofer: datosBus.chofer || '',
+      guarda: datosBus.guarda || '',
+      ruta: datosBus.ruta || ''
+    });
+    if (!marcador) {
       marcador = L.marker([lat, lng]).addTo(mapa);
       mapa.setView([lat, lng], 15);
     } else {
@@ -63,9 +166,7 @@ const db = firebase.database();
     }
   }
 
-  function error(e) {
-    document.getElementById('info').textContent = 'Error: ' + e.message;
-  }
+  function error(e) { $('info').textContent = 'Error: ' + e.message; }
 </script>
 </body>
 </html>

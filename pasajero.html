@@ -10,13 +10,15 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
   body { font-family: sans-serif; margin: 10px; }
-  #mapa { height: 75vh; margin-top: 10px; }
+  #mapa { height: 50vh; margin-top: 10px; }
+  .bus { background: #f1f3f4; border-radius: 10px; padding: 10px; margin: 8px 0; }
 </style>
 </head>
 <body>
-<h3>Colectivo a Ybycuí</h3>
-<p id="info">Esperando al colectivo...</p>
+<h3>Colectivos en recorrido</h3>
+<p id="info">Esperando colectivos...</p>
 <div id="mapa"></div>
+<div id="lista"></div>
 
 <script>
   const firebaseConfig = {
@@ -29,38 +31,77 @@
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
 
+  const $ = function (id) { return document.getElementById(id); };
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
   const mapa = L.map('mapa').setView([-25.7, -57.2], 10);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(mapa);
 
-  let marcador = null;
-  let ultimaHora = null;
+  let buses = {};
+  const marcadores = {};
+  let centrado = false;
 
-  function actualizarTexto() {
-    if (ultimaHora === null) return;
-    const seg = Math.round((Date.now() - ultimaHora) / 1000);
-    document.getElementById('info').textContent = 'Última señal hace ' + seg + ' segundos';
+  function detalle(b) {
+    const seg = Math.round((Date.now() - b.hora) / 1000);
+    return '<b>Colectivo N° ' + esc(b.numero) + '</b><br>' +
+      'Chapa: ' + esc(b.chapa) + ' · Año: ' + esc(b.anio) + '<br>' +
+      'Conductor: ' + esc(b.chofer) + '<br>' +
+      'Guarda: ' + esc(b.guarda) + '<br>' +
+      'Ruta: ' + esc(b.ruta) + '<br>' +
+      'Salida: ' + esc(b.salida) + ' hs<br>' +
+      'Última señal hace ' + seg + ' segundos';
   }
-  setInterval(actualizarTexto, 1000);
 
-  db.ref('buses/bus1').on('value', function (snap) {
-    const d = snap.val();
-    if (!d) {
-      ultimaHora = null;
-      document.getElementById('info').textContent = 'El colectivo no está en recorrido';
-      if (marcador) { mapa.removeLayer(marcador); marcador = null; }
-      return;
+  function dibujar() {
+    const ids = Object.keys(buses);
+    $('info').textContent = ids.length ? ids.length + ' colectivo(s) en recorrido' : 'No hay colectivos en recorrido';
+    let html = '';
+    ids.forEach(function (id) {
+      html += '<div class="bus" data-id="' + esc(id) + '">' + detalle(buses[id]) + '</div>';
+      if (marcadores[id]) { marcadores[id].setPopupContent(detalle(buses[id])); }
+    });
+    $('lista').innerHTML = html;
+  }
+
+  $('lista').onclick = function (e) {
+    const el = e.target.closest('.bus');
+    if (!el) return;
+    const id = el.dataset.id;
+    if (buses[id] && marcadores[id]) {
+      mapa.setView([buses[id].lat, buses[id].lng], 15);
+      marcadores[id].openPopup();
     }
-    ultimaHora = d.hora;
-    actualizarTexto();
-    if (!marcador) {
-      marcador = L.marker([d.lat, d.lng]).addTo(mapa);
-      mapa.setView([d.lat, d.lng], 14);
-    } else {
-      marcador.setLatLng([d.lat, d.lng]);
+  };
+
+  db.ref('buses').on('value', function (snap) {
+    buses = snap.val() || {};
+    Object.keys(marcadores).forEach(function (id) {
+      if (!buses[id]) { mapa.removeLayer(marcadores[id]); delete marcadores[id]; }
+    });
+    const ids = Object.keys(buses);
+    ids.forEach(function (id) {
+      const b = buses[id];
+      if (!marcadores[id]) {
+        marcadores[id] = L.marker([b.lat, b.lng]).addTo(mapa).bindPopup(detalle(b));
+      } else {
+        marcadores[id].setLatLng([b.lat, b.lng]);
+      }
+    });
+    if (!centrado && ids.length) {
+      mapa.fitBounds(ids.map(function (id) { return [buses[id].lat, buses[id].lng]; }),
+        { maxZoom: 14, padding: [30, 30] });
+      centrado = true;
     }
+    dibujar();
   });
+
+  setInterval(dibujar, 1000);
 </script>
 </body>
 </html>
