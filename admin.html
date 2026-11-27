@@ -838,7 +838,10 @@
   }
   function cercaDe(id) {
     if (!mapaVivo) return '';
-    return lugarEnRuta(buses[id], paradasDe(colectivos[id].rutaId), geoDe(id));
+    const b = buses[id];
+    const s = lugarEnRuta(b, paradasDe(colectivos[id].rutaId), geoDe(id));
+    if (!b.lugar) return s;
+    return 'En ' + b.lugar + (s && s.toLowerCase().indexOf(String(b.lugar).toLowerCase()) < 0 ? ' · ' + s : '');
   }
 
   function hace(t) {

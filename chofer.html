@@ -86,6 +86,7 @@
   let primeraCarga = true;
   let guardando = false;
   let wakeLock = null;
+  let lugar = '', ultGeo = null, buscandoLugar = false;  // ciudad donde está ahora
 
   // ----- Inicio de sesión -----
   $('btnLogin').onclick = function () {
@@ -266,7 +267,7 @@
   function detener(borrar) {
     const estabaEnRecorrido = watchId !== null;
     if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-    ultima = null; rumbo = null;
+    ultima = null; rumbo = null; lugar = ''; ultGeo = null;
     soltarPantalla();
     if (marcador) { mapa.removeLayer(marcador); marcador = null; }
     $('btn').textContent = 'Iniciar recorrido';
@@ -294,10 +295,29 @@
     return (Math.atan2(y, x) / r + 360) % 360;
   }
 
+  // Averigua en qué ciudad/barrio está (OpenStreetMap). Máximo 1 consulta cada 20 s y solo si se movió 400 m
+  function actualizarLugar(lat, lng) {
+    if (buscandoLugar) return;
+    const ahora = Date.now();
+    if (ultGeo && (ahora - ultGeo.t < 20000 || mapa.distance([ultGeo.lat, ultGeo.lng], [lat, lng]) < 400)) return;
+    buscandoLugar = true;
+    ultGeo = { lat: lat, lng: lng, t: ahora };
+    fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=es&lat=' + lat + '&lon=' + lng)
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        const a = (j && j.address) || {};
+        const n = a.city || a.town || a.village || a.municipality || a.suburb || a.hamlet || a.neighbourhood || a.county || '';
+        if (n) { lugar = String(n).replace(/^Distrito de /i, ''); }
+      })
+      .catch(function () {})
+      .finally(function () { buscandoLugar = false; });
+  }
+
   function mostrar(pos) {
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
     const actual = { lat: lat, lng: lng };
+    actualizarLugar(lat, lng);
 
     // Dirección: primero la del celular; si no hay, la calculamos con el punto anterior
     const h = pos.coords.heading;
@@ -315,6 +335,7 @@
     db.ref('buses/' + busId).set({
       lat: lat, lng: lng, hora: Date.now(),
       rumbo: rumbo,
+      lugar: lugar,
       inicio: inicio,
       salida: $('hora').value,
       numero: datosBus.numero || '',

@@ -143,7 +143,10 @@
     const c = colectivos[id] || {};
     const b = buses[id];
     if (!b) return '';
-    return lugarEnRuta(b, paradasDe(c.rutaId), geoListo(c.rutaId));
+    const s = lugarEnRuta(b, paradasDe(c.rutaId), geoListo(c.rutaId));
+    if (!b.lugar) return s;
+    // Ciudad real publicada por el chofer; si la parada más cercana dice otra cosa, se agrega
+    return 'En ' + b.lugar + (s && norm(s).indexOf(norm(b.lugar)) < 0 ? ' · ' + s : '');
   }
 
   // Punto del pasajero: su ubicación, o la parada de "Salgo desde"
@@ -349,9 +352,9 @@
     if (!g || g.length < 2) return null;
     const bus = enRuta(g, b, distanciaM), yo = enRuta(g, ref, distanciaM);
     if (yo.lejos > 3) return { lejos: yo.lejos };
-    if (km(b, ref) < 0.3) return { min: 0 };
+    if (km(b, ref) < 0.3) return { min: 0, km: km(b, ref) };
     if (yo.km < bus.km) return { paso: true };
-    return { min: (yo.km - bus.km) / velocidadUsada(id) * 60 };
+    return { min: (yo.km - bus.km) / velocidadUsada(id) * 60, km: yo.km - bus.km };
   }
 
   function textoEta(id) {
@@ -550,7 +553,7 @@
     }
     const m = cercaMin(id);
     return '<div class="aviso-min">🔔 Avisarme cuando falten ' +
-      '<select class="sel-cerca" data-id="' + esc(id) + '">' + [5, 10, 15, 30].map(function (v) {
+      '<select class="sel-cerca" data-id="' + esc(id) + '">' + [3, 5, 10, 15, 30].map(function (v) {
         return '<option value="' + v + '"' + (m === v ? ' selected' : '') + '>' + v + ' min</option>';
       }).join('') + '</select> para que llegue</div>';
   }
@@ -560,13 +563,16 @@
     activos().forEach(function (id) {
       if (!suscrito(id)) return;
       const e = etaMin(id);
-      if (!e || e.min === undefined || e.min > cercaMin(id)) return;
+      if (!e || e.min === undefined) return;
+      // Avisa por minutos, o si ya está a 1 km o menos (aunque el cálculo de tiempo diga más)
+      if (e.min > cercaMin(id) && !(e.km !== undefined && e.km <= 1)) return;
       const viaje = String(buses[id].inicio || fechaHoy() + buses[id].salida);
       if (avisadosCerca[id] === viaje) return;
       avisadosCerca[id] = viaje;
       guardar('avisadosCerca', avisadosCerca);
       notificar('🚏 Se acerca tu colectivo',
-        infoBus(id) + '\n' + (e.min < 1 ? 'Está llegando a tu parada' : 'Llega en ~' + duracion(e.min)), id);
+        infoBus(id) + '\n' + (e.min < 1 ? 'Está llegando a tu parada' : 'Llega en ~' + duracion(e.min) +
+          (e.km !== undefined ? ' · a ' + distanciaTexto(e.km) : '')) + '\n' + dondeEsta(id), id);
     });
   }
   function eligiendo() {
@@ -808,9 +814,9 @@
       avisos[id] = true;
       pedirPermiso();
       delete avisadosCerca[id];
+      if (!miPos) { pedirUbicacion(false); }   // sin tu ubicación no se puede avisar cuando se acerque
       if (estaActivo(id)) {
         mostrarToast('Te avisamos cuando el N° ' + c.numero + ' esté cerca de tu parada');
-        if (!miPos) { pedirUbicacion(false); }
       } else {
         mostrarToast('Avisos activados para el N° ' + c.numero + '. Elegí cuánto antes querés que te avisemos.');
       }
@@ -867,7 +873,7 @@
   }
 
   function notificar(titulo, cuerpo, id) {
-    mostrarToast(titulo + ': ' + cuerpo.split('\n')[0]);
+    mostrarToast(titulo + ': ' + cuerpo.split('\n')[0], 20000);
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         const noti = new Notification(titulo, { body: cuerpo, tag: titulo + id });
@@ -877,12 +883,12 @@
   }
 
   let toastTimer = null;
-  function mostrarToast(t) {
+  function mostrarToast(t, ms) {
     const el = $('toast');
     el.textContent = t;
     el.classList.remove('oculto');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.classList.add('oculto'); }, 5000);
+    toastTimer = setTimeout(function () { el.classList.add('oculto'); }, ms || 5000);
   }
 
   // ----- Escuchar Firebase en tiempo real -----
