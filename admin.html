@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administración de colectivos</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -33,6 +35,8 @@
   .ayuda { font-size: 13px; color: #5f6368; margin: 2px 0 0; line-height: 1.4; }
   .vacio { color: #5f6368; font-size: 15px; }
   #error { color: #d93025; }
+  #mapaRuta { height: 45vh; border-radius: 10px; margin: 6px 0; }
+  .parada span { flex: 1; }
   .oculto { display: none !important; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #202124; color: #fff;
            padding: 12px 16px; border-radius: 10px; z-index: 10; max-width: 92%; font-size: 15px; }
@@ -56,12 +60,43 @@
 
   <div id="tabs" class="tabs">
     <button id="tabCol" class="sel">🚌 Colectivos</button>
+    <button id="tabRut">🗺️ Rutas</button>
     <button id="tabEmp">🏢 Empresas</button>
   </div>
 
   <div id="vistaCol">
     <button id="btnNuevoCol">+ Nuevo colectivo</button>
     <div id="listaCol"></div>
+  </div>
+
+  <div id="vistaRut" class="oculto">
+    <button id="btnNuevaRuta">+ Nueva ruta</button>
+    <div id="listaRut"></div>
+  </div>
+
+  <div id="formRuta" class="oculto">
+    <h2 id="tituloRuta">Nueva ruta</h2>
+    <div id="cajaRutaEmp">
+      <label for="rEmp">Empresa</label>
+      <select id="rEmp"></select>
+    </div>
+
+    <label>Ciudades en orden (la primera es la salida y la última el destino)</label>
+    <div id="rParadas"></div>
+
+    <label for="rCiudad">Agregar ciudad</label>
+    <div class="fila">
+      <input id="rCiudad" list="ciudades" placeholder="Ej: Mbuyapey">
+      <button id="btnCiudad" class="chico" type="button">Agregar</button>
+    </div>
+    <datalist id="ciudades"></datalist>
+    <div id="rOpciones"></div>
+    <p class="ayuda">También podés tocar el mapa para marcar una parada.</p>
+    <div id="mapaRuta"></div>
+
+    <button id="btnInvertir" class="sec" type="button">⇅ Invertir el orden (para la vuelta)</button>
+    <button id="btnGuardarRuta">Guardar ruta</button>
+    <button id="btnCancelarRuta" class="sec">Cancelar</button>
   </div>
 
   <div id="vistaEmp" class="oculto">
@@ -100,6 +135,7 @@
 
     <label for="fRuta">Ruta</label>
     <select id="fRuta"></select>
+    <button id="btnRutaDesdeCol" class="sec" type="button">+ Crear una ruta nueva</button>
 
     <label for="fChofer">Conductor</label>
     <input id="fChofer" placeholder="Nombre del conductor">
@@ -226,7 +262,7 @@
     dejarDeEscuchar();
     empresas = {}; rutas = {}; colectivos = {}; asignaciones = {}; salidasHoy = {}; encargados = {};
     esGeneral = false; miEmpresa = null; editId = null; admEmp = null;
-    $('listaCol').innerHTML = ''; $('listaEmp').innerHTML = '';
+    $('listaCol').innerHTML = ''; $('listaEmp').innerHTML = ''; $('listaRut').innerHTML = '';
     $('app').classList.add('oculto');
     $('login').classList.remove('oculto');
     $('clave').value = '';
@@ -234,15 +270,18 @@
 
   // ----- Pantallas -----
   function ver(v) {
-    ['vistaCol', 'vistaEmp', 'formCol', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
+    ['vistaCol', 'vistaRut', 'vistaEmp', 'formCol', 'formRuta', 'formAdm'].forEach(function (x) { $(x).classList.toggle('oculto', x !== v); });
+    $('tabs').classList.toggle('oculto', v.indexOf('form') === 0);
     // La pestaña Empresas es solo para el administrador general
-    $('tabs').classList.toggle('oculto', !esGeneral || v === 'formCol' || v === 'formAdm');
+    $('tabEmp').classList.toggle('oculto', !esGeneral);
+    $('tabRut').classList.toggle('sel', v === 'vistaRut');
     $('tabCol').classList.toggle('sel', v === 'vistaCol');
     $('tabEmp').classList.toggle('sel', v === 'vistaEmp');
     window.scrollTo(0, 0);
   }
   $('tabCol').onclick = function () { ver('vistaCol'); };
   $('tabEmp').onclick = function () { ver('vistaEmp'); };
+  $('tabRut').onclick = function () { ver('vistaRut'); };
 
   // Empresas y colectivos que esta cuenta puede administrar
   function misEmpresas() {
@@ -275,6 +314,7 @@
     $('titulo').textContent = '⚙️ ' + (esGeneral ? 'Administración general'
       : (empresas[miEmpresa] ? empresas[miEmpresa].nombre : 'Administración'));
     pintarColectivos();
+    pintarRutas();
     if (esGeneral) { pintarEmpresas(); }
   }
 
@@ -376,6 +416,9 @@
         up['admins/' + uid] = null;
         up['encargados/' + eid + '/' + uid] = null;
       });
+      Object.keys(rutas).forEach(function (rid) {
+        if (rutas[rid].empresa === eid) { up['rutas/' + rid] = null; }
+      });
       db.ref().update(up).then(function () { aviso('✅ Empresa eliminada'); })
         .catch(function () { aviso('❌ No se pudo eliminar'); });
     }
@@ -441,19 +484,15 @@
 
   function abrirForm(id) {
     if (!misEmpresas().length) { aviso('Primero agregá una empresa en la pestaña Empresas'); ver('vistaEmp'); return; }
-    if (!Object.keys(rutas).length) { aviso('No hay rutas cargadas en la base de datos'); return; }
     editId = id;
     const c = id ? colectivos[id] : {};
     $('tituloForm').textContent = id ? 'Editar colectivo N° ' + c.numero : 'Nuevo colectivo';
     $('fEmp').innerHTML = (esGeneral ? '<option value="">Elegí la empresa</option>' : '') + misEmpresas().map(function (eid) {
       return '<option value="' + esc(eid) + '">' + esc(empresas[eid].nombre) + '</option>';
     }).join('');
-    $('fRuta').innerHTML = '<option value="">Elegí la ruta</option>' + Object.keys(rutas).map(function (rid) {
-      return '<option value="' + esc(rid) + '">' + esc(etiquetaRuta(rid)) + '</option>';
-    }).join('');
     $('fEmp').value = esGeneral ? (c.empresa || '') : miEmpresa;
     $('fEmp').disabled = !esGeneral;
-    $('fRuta').value = c.rutaId || '';
+    llenarRutas(c.rutaId || '');
     $('fNum').value = c.numero == null ? '' : c.numero;
     $('fChapa').value = c.chapa || '';
     $('fAnio').value = c.anio == null ? '' : c.anio;
@@ -466,6 +505,19 @@
     $('btnEliminar').classList.toggle('oculto', !id);
     ver('formCol');
   }
+
+  // Rutas que puede usar una empresa: las generales y las propias
+  function llenarRutas(elegida) {
+    const emp = esGeneral ? $('fEmp').value : miEmpresa;
+    $('fRuta').innerHTML = '<option value="">Elegí la ruta</option>' + Object.keys(rutas).filter(function (rid) {
+      return !rutas[rid].empresa || rutas[rid].empresa === emp;
+    }).map(function (rid) {
+      return '<option value="' + esc(rid) + '">' + esc(etiquetaRuta(rid)) + '</option>';
+    }).join('');
+    $('fRuta').value = elegida;
+    if ($('fRuta').selectedIndex < 0) { $('fRuta').value = ''; }
+  }
+  $('fEmp').addEventListener('change', function () { llenarRutas($('fRuta').value); });
 
   function pintarSalidas() {
     $('fSalidas').innerHTML = salidasForm.map(function (h, i) {
@@ -508,7 +560,7 @@
     const clave = $('fClave').value;
     if (!emp) { aviso('Elegí la empresa'); return; }
     if (!numero) { aviso('Escribí el número del colectivo'); return; }
-    if (!rid) { aviso('Elegí la ruta'); return; }
+    if (!rid || !rutas[rid]) { aviso('Elegí la ruta'); return; }
     const duplicado = Object.keys(colectivos).some(function (id) {
       return id !== editId && colectivos[id].empresa === emp && Number(colectivos[id].numero) === numero;
     });
@@ -570,6 +622,175 @@
       aviso('✅ Colectivo eliminado');
       ver('vistaCol');
     }).catch(function () { aviso('❌ No se pudo eliminar'); });
+  };
+
+  // ----- Rutas -----
+  let rutaId = null, paradasForm = [], volverACol = false;
+  let mapa = null, capa = null;
+
+  function paradasDe(rid) { const r = rutas[rid]; return r && r.paradas ? Object.values(r.paradas) : []; }
+  function puedeEditar(rid) { return esGeneral || rutas[rid].empresa === miEmpresa; }
+  function usanRuta(rid) {
+    return Object.keys(colectivos).filter(function (id) { return colectivos[id].rutaId === rid; });
+  }
+
+  function pintarRutas() {
+    const ids = Object.keys(rutas).filter(function (rid) {
+      return esGeneral || !rutas[rid].empresa || rutas[rid].empresa === miEmpresa;
+    });
+    $('listaRut').innerHTML = ids.map(function (rid) {
+      const e = empresas[rutas[rid].empresa];
+      return '<div class="tarjeta"><div class="txt"><b>' + esc(etiquetaRuta(rid)) + '</b>' +
+        '<br><small>' + esc(paradasDe(rid).map(function (p) { return p.nombre; }).join(' → ')) + '</small>' +
+        '<br><small>' + esc(e ? e.nombre : 'Ruta general') + '</small></div>' +
+        (puedeEditar(rid)
+          ? '<div class="acciones"><button class="chico" data-editar-ruta="' + esc(rid) + '">Editar</button>' +
+            '<button class="chico rojo" data-borrar-ruta="' + esc(rid) + '">Eliminar</button></div>' : '') +
+        '</div>';
+    }).join('') || '<p class="vacio">Todavía no hay rutas.</p>';
+  }
+
+  $('listaRut').addEventListener('click', function (e) {
+    const ed = e.target.closest('[data-editar-ruta]');
+    if (ed) { abrirRuta(ed.dataset.editarRuta, false); return; }
+    const del = e.target.closest('[data-borrar-ruta]');
+    if (!del) return;
+    const rid = del.dataset.borrarRuta;
+    const n = usanRuta(rid).length;
+    if (n) { aviso('No se puede eliminar: ' + n + ' colectivo(s) usan esta ruta. Cambiales la ruta primero'); return; }
+    if (!confirm('¿Eliminar la ruta "' + etiquetaRuta(rid) + '"?')) return;
+    db.ref('rutas/' + rid).remove().then(function () { aviso('✅ Ruta eliminada'); })
+      .catch(function () { aviso('❌ No se pudo eliminar la ruta'); });
+  });
+
+  $('btnNuevaRuta').onclick = function () { abrirRuta(null, false); };
+  $('btnRutaDesdeCol').onclick = function () {
+    if (esGeneral && !$('fEmp').value) { aviso('Elegí primero la empresa'); return; }
+    abrirRuta(null, true);
+  };
+  $('btnCancelarRuta').onclick = function () { ver(volverACol ? 'formCol' : 'vistaRut'); };
+
+  function abrirRuta(rid, desdeCol) {
+    rutaId = rid; volverACol = desdeCol;
+    const r = rid ? rutas[rid] : {};
+    $('tituloRuta').textContent = rid ? 'Editar ruta' : 'Nueva ruta';
+    $('rEmp').innerHTML = '<option value="">Ruta general (todas las empresas)</option>' + Object.keys(empresas).map(function (eid) {
+      return '<option value="' + esc(eid) + '">' + esc(empresas[eid].nombre) + '</option>';
+    }).join('');
+    $('rEmp').value = rid ? (r.empresa || '') : (desdeCol ? $('fEmp').value : '');
+    $('cajaRutaEmp').classList.toggle('oculto', !esGeneral);
+    // Ciudades ya cargadas, para elegirlas de la lista
+    const nombres = {};
+    Object.keys(rutas).forEach(function (x) { paradasDe(x).forEach(function (p) { nombres[p.nombre] = true; }); });
+    $('ciudades').innerHTML = Object.keys(nombres).sort().map(function (n) { return '<option value="' + esc(n) + '">'; }).join('');
+    paradasForm = paradasDe(rid).map(function (p) { return Object.assign({}, p); });
+    $('rCiudad').value = ''; $('rOpciones').innerHTML = '';
+    ver('formRuta');
+    if (window.L) {
+      if (!mapa) {
+        mapa = L.map('mapaRuta').setView([-25.8, -57.0], 8);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapa);
+        capa = L.layerGroup().addTo(mapa);
+        mapa.on('click', function (e) {
+          const n = prompt('Nombre de la ciudad o parada');
+          if (n && n.trim()) { agregarParada(n.trim(), e.latlng.lat, e.latlng.lng); }
+        });
+      }
+      mapa.invalidateSize();
+    }
+    pintarParadas(true);
+  }
+
+  function pintarParadas(encuadrar) {
+    $('rParadas').innerHTML = paradasForm.map(function (p, i) {
+      return '<div class="tarjeta parada"><span>' + (i + 1) + '. ' + esc(p.nombre) + '</span>' +
+        '<button type="button" class="sec chico" data-subir="' + i + '"' + (i ? '' : ' disabled') + '>↑</button>' +
+        '<button type="button" class="sec chico" data-bajar="' + i + '"' + (i < paradasForm.length - 1 ? '' : ' disabled') + '>↓</button>' +
+        '<button type="button" class="rojo chico" data-sacar="' + i + '">✕</button></div>';
+    }).join('') || '<p class="vacio">Todavía no agregaste ciudades.</p>';
+    if (!mapa) return;
+    capa.clearLayers();
+    const pts = paradasForm.map(function (p) { return [p.lat, p.lng]; });
+    L.polyline(pts, { color: '#e8710a', dashArray: '6' }).addTo(capa);
+    paradasForm.forEach(function (p, i) {
+      L.circleMarker([p.lat, p.lng], { radius: 7, color: '#e8710a' }).bindTooltip(esc((i + 1) + '. ' + p.nombre)).addTo(capa);
+    });
+    if (encuadrar && pts.length) { mapa.fitBounds(pts, { maxZoom: 12, padding: [30, 30] }); }
+  }
+
+  $('rParadas').addEventListener('click', function (e) {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const d = b.dataset;
+    if (d.sacar != null) { paradasForm.splice(Number(d.sacar), 1); }
+    else {
+      const i = Number(d.subir != null ? d.subir : d.bajar), j = d.subir != null ? i - 1 : i + 1;
+      const t = paradasForm[i]; paradasForm[i] = paradasForm[j]; paradasForm[j] = t;
+    }
+    pintarParadas(false);
+  });
+
+  function agregarParada(nombre, lat, lng) {
+    paradasForm.push({ nombre: nombre, lat: lat, lng: lng });
+    $('rCiudad').value = ''; $('rOpciones').innerHTML = '';
+    pintarParadas(true);
+  }
+
+  let opciones = [];
+  $('btnCiudad').onclick = function () {
+    const q = $('rCiudad').value.trim();
+    if (!q) { aviso('Escribí el nombre de la ciudad'); return; }
+    // Si la ciudad ya está cargada en otra ruta, se reutiliza su ubicación
+    let ya = null;
+    Object.keys(rutas).forEach(function (x) {
+      paradasDe(x).forEach(function (p) { if (!ya && norm(p.nombre) === norm(q)) { ya = p; } });
+    });
+    if (ya) { agregarParada(ya.nombre, ya.lat, ya.lng); return; }
+    $('btnCiudad').disabled = true;
+    $('rOpciones').innerHTML = '<p class="vacio">Buscando...</p>';
+    fetch('https://nominatim.openstreetmap.org/search?format=json&countrycodes=py&limit=5&accept-language=es&q=' + encodeURIComponent(q))
+      .then(function (res) { if (!res.ok) { throw new Error(); } return res.json(); })
+      .then(function (lista) {
+        opciones = lista;
+        $('rOpciones').innerHTML = lista.map(function (o, i) {
+          return '<button type="button" class="sec" data-opcion="' + i + '">📍 ' + esc(o.display_name) + '</button>';
+        }).join('') || '<p class="vacio">No se encontró. Probá otro nombre o tocá el mapa.</p>';
+      })
+      .catch(function () { $('rOpciones').innerHTML = '<p class="vacio">No se pudo buscar. Tocá el mapa para marcar la parada.</p>'; })
+      .finally(function () { $('btnCiudad').disabled = false; });
+  };
+  $('rOpciones').addEventListener('click', function (e) {
+    const b = e.target.closest('[data-opcion]');
+    if (!b) return;
+    const o = opciones[Number(b.dataset.opcion)];
+    agregarParada($('rCiudad').value.trim() || o.display_name.split(',')[0], Number(o.lat), Number(o.lon));
+  });
+
+  $('btnInvertir').onclick = function () { paradasForm.reverse(); pintarParadas(false); };
+
+  $('btnGuardarRuta').onclick = function () {
+    if (paradasForm.length < 2) { aviso('Agregá al menos dos ciudades: salida y destino'); return; }
+    const emp = esGeneral ? $('rEmp').value : miEmpresa;
+    const nombre = paradasForm[0].nombre + ' - ' + paradasForm[paradasForm.length - 1].nombre;
+    if (rutaId && emp && usanRuta(rutaId).some(function (id) { return colectivos[id].empresa !== emp; })) {
+      aviso('Otras empresas usan esta ruta. Tiene que seguir siendo general'); return;
+    }
+    let id = rutaId;
+    if (!id) {
+      const base = 'ruta-' + (norm((emp ? emp + ' ' : '') + nombre).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'nueva');
+      let n = 2; id = base;
+      while (rutas[id]) { id = base + '-' + n; n++; }
+    }
+    const up = {};
+    up['rutas/' + id] = { nombre: nombre, empresa: emp || null, paradas: paradasForm };
+    // Los colectivos que usan la ruta muestran el nombre nuevo
+    usanRuta(id).forEach(function (b) { up['colectivos/' + b + '/ruta'] = nombre; });
+    $('btnGuardarRuta').disabled = true;
+    db.ref().update(up).then(function () {
+      aviso('✅ Ruta guardada');
+      if (volverACol) { llenarRutas(id); ver('formCol'); } else { ver('vistaRut'); }
+    }).catch(function () { aviso('❌ No se pudo guardar la ruta. Revisá las reglas de Firebase'); })
+      .finally(function () { $('btnGuardarRuta').disabled = false; });
   };
 </script>
 </body>
